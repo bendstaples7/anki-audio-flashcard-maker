@@ -39,14 +39,14 @@ class CantoneseCardTemplate:
 .front {
     font-size: 24px;
     font-weight: bold;
-    color: #2c3e50;
+    color: black;
     margin-bottom: 20px;
 }
 
 .back {
     font-size: 28px;
     font-weight: bold;
-    color: #e74c3c;
+    color: black;
     margin: 20px 0;
 }
 
@@ -65,10 +65,7 @@ class CantoneseCardTemplate:
 }
 
 .tags {
-    font-size: 12px;
-    color: #6c757d;
-    margin-top: 20px;
-    font-style: italic;
+    display: none;
 }
 
 /* Mobile responsiveness */
@@ -94,9 +91,6 @@ class CantoneseCardTemplate:
     <div class="front">
         {{English}}
     </div>
-    <div class="tags">
-        {{Tags}}
-    </div>
 </div>
 """
     
@@ -116,10 +110,6 @@ class CantoneseCardTemplate:
     <div class="audio-section">
         <div class="audio-label">🔊 Pronunciation:</div>
         {{Audio}}
-    </div>
-    
-    <div class="tags">
-        {{Tags}}
     </div>
 </div>
 """
