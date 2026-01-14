@@ -50,6 +50,9 @@ function initApp() {
     // Set up generate button
     setupGenerateButton();
     
+    // Set up back button
+    setupBackButton();
+    
     // Initialize session loading (check URL for session ID)
     initSessionLoading();
     
@@ -120,7 +123,7 @@ async function fetchWithRetry(url, options = {}, maxRetries = 2) {
         try {
             // Add timeout to prevent hanging requests
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+            const timeoutId = setTimeout(() => controller.abort(), 300000); // 5 minute timeout for long operations
             
             const response = await fetch(url, {
                 ...options,
@@ -134,7 +137,7 @@ async function fetchWithRetry(url, options = {}, maxRetries = 2) {
                 // Try to parse error message from response
                 let errorMessage = `Request failed with status ${response.status}`;
                 try {
-                    const errorData = await response.json();
+                    const errorData = await response.clone().json();
                     errorMessage = errorData.error || errorMessage;
                 } catch (e) {
                     // Response is not JSON, use status text
@@ -867,6 +870,95 @@ function setupGenerateButton() {
     }
 }
 
+/**
+ * Setup back button to return to upload screen
+ */
+function setupBackButton() {
+    const backBtn = document.getElementById('back-btn');
+    
+    if (backBtn) {
+        backBtn.addEventListener('click', returnToUploadScreen);
+        console.log('Back button initialized');
+    }
+}
+
+/**
+ * Return to upload screen and reset the application state
+ */
+function returnToUploadScreen() {
+    // Confirm if user wants to leave (if there are unsaved changes)
+    const hasUnsavedChanges = AppState.alignments.some(a => a.is_manually_adjusted);
+    
+    if (hasUnsavedChanges) {
+        const confirmed = confirm(
+            'You have unsaved manual adjustments. Are you sure you want to return to the upload screen?\n\n' +
+            'Your current session will be preserved and you can return to it later using the session URL.'
+        );
+        
+        if (!confirmed) {
+            return;
+        }
+    }
+    
+    // Stop all audio playback
+    stopAllAudio();
+    
+    // Destroy all waveforms to free memory
+    destroyAllWaveforms();
+    
+    // Clear application state
+    AppState.sessionId = null;
+    AppState.currentSession = null;
+    AppState.alignments = [];
+    AppState.currentlyPlaying = null;
+    AppState.pendingUpdates.clear();
+    
+    // Clear uploaded files
+    AppState.uploadedFiles = {
+        url: null,
+        audioFile: null,
+        audioFilePath: null
+    };
+    
+    // Reset validation state
+    AppState.validationState = {
+        urlValid: false,
+        audioValid: false
+    };
+    
+    // Clear form inputs
+    elements.docUrlInput.value = '';
+    elements.audioFileInput.value = '';
+    elements.fileNameDisplay.textContent = 'No file selected';
+    
+    // Clear feedback messages
+    clearFeedback(elements.urlFeedback);
+    clearFeedback(elements.fileFeedback);
+    
+    // Update process button state
+    updateProcessButton();
+    
+    // Clear alignment rows
+    const alignmentRows = document.getElementById('alignment-rows');
+    if (alignmentRows) {
+        alignmentRows.innerHTML = '';
+    }
+    
+    // Remove session ID from URL
+    const url = new URL(window.location);
+    url.searchParams.delete('session');
+    window.history.pushState({}, '', url);
+    
+    // Show upload section, hide alignment section
+    elements.uploadSection.style.display = 'block';
+    elements.alignmentSection.style.display = 'none';
+    
+    // Scroll to top
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    
+    console.log('Returned to upload screen');
+}
+
 // Initialize when DOM is ready
 document.addEventListener('DOMContentLoaded', initApp);
 
@@ -1060,15 +1152,37 @@ function createTermRow(termAlignment) {
     waveformContainer.className = 'term-waveform';
     waveformContainer.id = `waveform-${termAlignment.term_id}`;
     
-    const boundaryTimes = document.createElement('div');
-    boundaryTimes.className = 'boundary-times';
-    boundaryTimes.innerHTML = `
-        <span class="start-time">${formatTime(termAlignment.start_time)}</span>
-        <span class="end-time">${formatTime(termAlignment.end_time)}</span>
+    // Boundary adjustment controls
+    const boundaryControls = document.createElement('div');
+    boundaryControls.className = 'boundary-controls';
+    boundaryControls.innerHTML = `
+        <div class="time-inputs">
+            <label>
+                Start: <input type="number" 
+                    class="time-input start-time-input" 
+                    id="start-${termAlignment.term_id}"
+                    value="${termAlignment.start_time.toFixed(2)}" 
+                    step="0.01" 
+                    min="0"
+                    data-term-id="${termAlignment.term_id}">s
+            </label>
+            <label>
+                End: <input type="number" 
+                    class="time-input end-time-input" 
+                    id="end-${termAlignment.term_id}"
+                    value="${termAlignment.end_time.toFixed(2)}" 
+                    step="0.01" 
+                    min="0"
+                    data-term-id="${termAlignment.term_id}">s
+            </label>
+            <button class="trim-btn" data-term-id="${termAlignment.term_id}">
+                ✂ Trim
+            </button>
+        </div>
     `;
     
     waveformCell.appendChild(waveformContainer);
-    waveformCell.appendChild(boundaryTimes);
+    waveformCell.appendChild(boundaryControls);
     
     // Controls column
     const controlsCell = document.createElement('div');
@@ -1081,6 +1195,24 @@ function createTermRow(termAlignment) {
     playBtn.onclick = () => playTermAudio(termAlignment.term_id);
     
     controlsCell.appendChild(playBtn);
+    
+    // Add regeneration buttons
+    const regenBtn = document.createElement('button');
+    regenBtn.className = 'regen-btn';
+    regenBtn.innerHTML = '🔄 Regenerate';
+    regenBtn.title = 'Re-run alignment for this term only';
+    regenBtn.dataset.termId = termAlignment.term_id;
+    regenBtn.onclick = () => regenerateTerm(termAlignment.term_id);
+    
+    const regenFromBtn = document.createElement('button');
+    regenFromBtn.className = 'regen-from-btn';
+    regenFromBtn.innerHTML = '🔄➡ From Here';
+    regenFromBtn.title = 'Re-run alignment for this term and all following terms';
+    regenFromBtn.dataset.termId = termAlignment.term_id;
+    regenFromBtn.onclick = () => regenerateFromTerm(termAlignment.term_id);
+    
+    controlsCell.appendChild(regenBtn);
+    controlsCell.appendChild(regenFromBtn);
     
     // Add reset button if manually adjusted
     if (termAlignment.is_manually_adjusted) {
@@ -1129,6 +1261,40 @@ function createTermRow(termAlignment) {
 }
 
 /**
+ * Render waveforms progressively with delays to prevent browser overload
+ * @param {Array} alignments - Array of TermAlignment objects
+ */
+async function renderWaveformsProgressively(alignments) {
+    console.log(`Starting progressive waveform rendering for ${alignments.length} terms`);
+    
+    for (let i = 0; i < alignments.length; i++) {
+        const alignment = alignments[i];
+        
+        if (alignment.audio_segment_url) {
+            try {
+                await renderTermWaveform(
+                    alignment.term_id,
+                    alignment.audio_segment_url,
+                    alignment.start_time,
+                    alignment.end_time
+                );
+                
+                // Small delay between each waveform to prevent overwhelming the browser
+                // Only delay if there are more waveforms to render
+                if (i < alignments.length - 1) {
+                    await new Promise(resolve => setTimeout(resolve, 50)); // 50ms delay
+                }
+            } catch (error) {
+                console.error(`Failed to render waveform for term ${alignment.term_id}:`, error);
+                // Continue with next waveform even if one fails
+            }
+        }
+    }
+    
+    console.log('Progressive waveform rendering complete');
+}
+
+/**
  * Render waveform for a specific term
  * @param {string} termId - Term identifier
  * @param {string} audioUrl - URL to the audio segment
@@ -1139,66 +1305,118 @@ async function renderTermWaveform(termId, audioUrl, startTime, endTime) {
     const containerId = `waveform-${termId}`;
     
     try {
+        // Destroy existing waveform if it exists
+        const existingWaveform = getTermWaveform(termId);
+        if (existingWaveform) {
+            console.log(`Destroying existing waveform for term ${termId}`);
+            existingWaveform.instance.destroy();
+            WaveSurferInstances.termWaveforms.delete(termId);
+        }
+        
         // Initialize WaveSurfer for this term
         const wavesurfer = initializeTermWaveform(containerId, termId);
         
-        // Load audio segment
+        // Load the audio segment
         await wavesurfer.load(audioUrl);
         
-        // Add boundary markers as regions
+        // Get the waveform data (includes regions plugin)
         const waveformData = getTermWaveform(termId);
+        
         if (waveformData && waveformData.regions) {
+            // Add a draggable region covering the full segment
+            // User can drag the edges to trim
             const duration = wavesurfer.getDuration();
             
-            // Add a draggable region covering the entire segment
             const region = waveformData.regions.addRegion({
                 id: `region-${termId}`,
                 start: 0,
                 end: duration,
-                color: 'rgba(52, 152, 219, 0.2)',
-                drag: true,  // Enable dragging
-                resize: true, // Enable resizing (boundary adjustment)
-                data: {
-                    termId: termId,
-                    startTime: startTime,
-                    endTime: endTime
-                }
+                color: 'rgba(52, 152, 219, 0.3)', // Semi-transparent blue
+                drag: false, // Don't allow dragging the whole region
+                resize: true, // Allow resizing from edges
+                content: ''
             });
             
-            // Set up drag event handlers for this region
-            setupRegionDragHandlers(termId, waveformData.regions);
+            // Set up drag handlers for automatic trimming
+            setupRegionDragHandlersForTrim(termId, waveformData.regions);
         }
         
         console.log(`Waveform rendered for term ${termId}`);
         
     } catch (error) {
         console.error(`Failed to render waveform for term ${termId}:`, error);
-        showError(`Failed to load waveform for term ${termId}`);
+        // Don't show error toast for individual waveform failures
+        // Just log it and continue
     }
 }
 
 /**
- * Set up drag event handlers for a term's region
- * Task 10.1: Create draggable boundary markers
+ * Set up drag event handlers for trim functionality
+ * Updates input fields as you drag and auto-trims when you release
  * @param {string} termId - Term identifier
  * @param {Object} regionsPlugin - WaveSurfer regions plugin instance
  */
-function setupRegionDragHandlers(termId, regionsPlugin) {
-    // Listen for region update events (drag and resize)
+function setupRegionDragHandlersForTrim(termId, regionsPlugin) {
+    console.log(`Setting up trim drag handlers for term ${termId}`);
+    
+    // Get the alignment data for this term to know the current absolute times
+    const alignment = AppState.alignments.find(a => a.term_id === termId);
+    if (!alignment) {
+        console.error(`No alignment found for term ${termId}`);
+        return;
+    }
+    
+    const originalStartTime = alignment.start_time;
+    const originalDuration = alignment.end_time - alignment.start_time;
+    
+    // Listen for region update events (while dragging)
     regionsPlugin.on('region-updated', (region) => {
         if (region.id === `region-${termId}`) {
-            handleRegionUpdate(termId, region);
+            // Region times are relative to the segment (0 to duration)
+            // Convert to absolute times by adding the original start time
+            // and scaling based on the original duration
+            const relativeStart = region.start;
+            const relativeEnd = region.end;
+            
+            // Get current segment duration from waveform
+            const waveformData = getTermWaveform(termId);
+            if (!waveformData) return;
+            
+            const currentDuration = waveformData.instance.getDuration();
+            
+            // Calculate absolute times
+            // The region is on the current audio segment, so we need to map it back
+            // to absolute times based on the current alignment
+            const currentAlignment = AppState.alignments.find(a => a.term_id === termId);
+            if (!currentAlignment) return;
+            
+            const absoluteStart = currentAlignment.start_time + (relativeStart / currentDuration) * (currentAlignment.end_time - currentAlignment.start_time);
+            const absoluteEnd = currentAlignment.start_time + (relativeEnd / currentDuration) * (currentAlignment.end_time - currentAlignment.start_time);
+            
+            // Update input fields with absolute times
+            const startInput = document.getElementById(`start-${termId}`);
+            const endInput = document.getElementById(`end-${termId}`);
+            
+            if (startInput && endInput) {
+                startInput.value = absoluteStart.toFixed(2);
+                endInput.value = absoluteEnd.toFixed(2);
+            }
+            
+            console.log(`Region dragged for ${termId}: ${absoluteStart.toFixed(2)}s - ${absoluteEnd.toFixed(2)}s (absolute)`);
         }
     });
     
     // Listen for region update end (when user finishes dragging)
-    regionsPlugin.on('region-update-end', (region) => {
+    regionsPlugin.on('region-update-end', async (region) => {
         if (region.id === `region-${termId}`) {
-            handleRegionUpdateEnd(termId, region);
+            console.log(`Region drag ended for ${termId}, triggering trim`);
+            
+            // Automatically trigger trim with the new boundaries from input fields
+            await handleTrimBoundaries(termId);
         }
     });
     
-    console.log(`Drag handlers set up for term ${termId}`);
+    console.log(`Trim drag handlers set up for term ${termId}`);
 }
 
 /**
@@ -1442,37 +1660,6 @@ function validateBoundaries(termId, newStart, newEnd) {
         };
     }
     
-    // Find the term index
-    const termIndex = AppState.alignments.findIndex(a => a.term_id === termId);
-    if (termIndex === -1) {
-        return {
-            valid: false,
-            error: 'Term not found'
-        };
-    }
-    
-    // Check overlap with previous term
-    if (termIndex > 0) {
-        const prevTerm = AppState.alignments[termIndex - 1];
-        if (newStart < prevTerm.end_time) {
-            return {
-                valid: false,
-                error: `Start time overlaps with previous term "${prevTerm.english}" (ends at ${formatTime(prevTerm.end_time)})`
-            };
-        }
-    }
-    
-    // Check overlap with next term
-    if (termIndex < AppState.alignments.length - 1) {
-        const nextTerm = AppState.alignments[termIndex + 1];
-        if (newEnd > nextTerm.start_time) {
-            return {
-                valid: false,
-                error: `End time overlaps with next term "${nextTerm.english}" (starts at ${formatTime(nextTerm.start_time)})`
-            };
-        }
-    }
-    
     // Check boundaries are within audio duration
     const session = AppState.currentSession;
     if (session && newEnd > session.audio_duration) {
@@ -1482,6 +1669,7 @@ function validateBoundaries(termId, newStart, newEnd) {
         };
     }
     
+    // All validations passed
     return {
         valid: true,
         error: null
@@ -1522,24 +1710,193 @@ async function displayAlignments(alignments) {
     // Store alignments in app state
     AppState.alignments = alignments;
     
-    // Create and append rows
+    // Create and append rows first (fast)
     for (const alignment of alignments) {
         const row = createTermRow(alignment);
         alignmentRows.appendChild(row);
-        
-        // Render waveform for this term
-        // Audio URL will come from the session data
-        if (alignment.audio_segment_url) {
-            await renderTermWaveform(
-                alignment.term_id,
-                alignment.audio_segment_url,
-                alignment.start_time,
-                alignment.end_time
-            );
-        }
     }
     
+    // Set up event delegation for trim buttons
+    setupTrimButtonHandlers();
+    
     console.log(`Displayed ${alignments.length} term alignments`);
+    
+    // Render waveforms progressively with delays to prevent overwhelming the browser
+    // This happens in the background without blocking the UI
+    renderWaveformsProgressively(alignments);
+}
+
+/**
+ * Set up event handlers for trim buttons using event delegation
+ */
+function setupTrimButtonHandlers() {
+    const alignmentRows = document.getElementById('alignment-rows');
+    
+    // Remove any existing trim handler to avoid duplicates
+    if (alignmentRows._trimHandler) {
+        alignmentRows.removeEventListener('click', alignmentRows._trimHandler);
+    }
+    
+    // Create new handler
+    const trimHandler = async (e) => {
+        if (e.target.classList.contains('trim-btn')) {
+            console.log('Trim button clicked!', e.target);
+            const termId = e.target.dataset.termId;
+            console.log('Term ID:', termId);
+            await handleTrimBoundaries(termId);
+        }
+    };
+    
+    // Store reference and add listener
+    alignmentRows._trimHandler = trimHandler;
+    alignmentRows.addEventListener('click', trimHandler);
+    
+    console.log('Trim button handlers set up');
+}
+
+/**
+ * Handle trim button click - update boundaries based on input values
+ * @param {string} termId - Term identifier
+ */
+async function handleTrimBoundaries(termId) {
+    try {
+        // Get input values
+        const startInput = document.getElementById(`start-${termId}`);
+        const endInput = document.getElementById(`end-${termId}`);
+        
+        if (!startInput || !endInput) {
+            showError('Could not find time input fields');
+            return;
+        }
+        
+        const newStartTime = parseFloat(startInput.value);
+        const newEndTime = parseFloat(endInput.value);
+        
+        // Validate inputs
+        if (isNaN(newStartTime) || isNaN(newEndTime)) {
+            showError('Please enter valid time values');
+            return;
+        }
+        
+        if (newStartTime < 0 || newEndTime < 0) {
+            showError('Time values must be non-negative');
+            return;
+        }
+        
+        if (newStartTime >= newEndTime) {
+            showError('Start time must be less than end time');
+            return;
+        }
+        
+        // Validate boundaries don't overlap with adjacent terms
+        const validationResult = validateBoundaries(termId, newStartTime, newEndTime);
+        if (!validationResult.valid) {
+            showError(validationResult.error);
+            return;
+        }
+        
+        console.log(`Trimming term ${termId}: ${newStartTime}s - ${newEndTime}s`);
+        
+        // Show loading state
+        const trimBtn = document.querySelector(`.trim-btn[data-term-id="${termId}"]`);
+        const originalText = trimBtn.innerHTML;
+        trimBtn.innerHTML = '⏳ Trimming...';
+        trimBtn.disabled = true;
+        
+        // Send update to server
+        const response = await fetchWithRetry(`${API_BASE}/session/${AppState.sessionId}/update`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                term_id: termId,
+                start_time: newStartTime,
+                end_time: newEndTime
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (!data.success) {
+            throw new Error(data.error || 'Failed to update boundaries');
+        }
+        
+        // Update local state
+        const alignment = AppState.alignments.find(a => a.term_id === termId);
+        if (alignment) {
+            console.log(`Updating alignment state: ${alignment.start_time} -> ${newStartTime}, ${alignment.end_time} -> ${newEndTime}`);
+            alignment.start_time = newStartTime;
+            alignment.end_time = newEndTime;
+            alignment.is_manually_adjusted = true;
+        }
+        
+        // Update input fields to reflect the new values
+        console.log(`Updating input fields: start=${newStartTime}, end=${newEndTime}`);
+        startInput.value = newStartTime.toFixed(2);
+        endInput.value = newEndTime.toFixed(2);
+        console.log(`Input fields after update: start=${startInput.value}, end=${endInput.value}`);
+        
+        // Mark as pending update
+        AppState.pendingUpdates.set(termId, {
+            start_time: newStartTime,
+            end_time: newEndTime
+        });
+        
+        // Update UI to show manual adjustment
+        const termRow = document.getElementById(`term-row-${termId}`);
+        if (termRow && !termRow.classList.contains('manually-adjusted')) {
+            termRow.classList.add('manually-adjusted');
+            
+            // Add reset button if not already present
+            const controlsCell = termRow.querySelector('.controls-cell');
+            if (controlsCell && !controlsCell.querySelector('.reset-btn')) {
+                const resetBtn = document.createElement('button');
+                resetBtn.className = 'reset-btn';
+                resetBtn.innerHTML = '↺ Reset';
+                resetBtn.dataset.termId = termId;
+                resetBtn.onclick = () => resetTermAlignment(termId);
+                
+                const adjustmentIndicator = document.createElement('div');
+                adjustmentIndicator.className = 'adjustment-indicator';
+                adjustmentIndicator.textContent = '✓ Manually adjusted';
+                
+                controlsCell.appendChild(resetBtn);
+                controlsCell.appendChild(adjustmentIndicator);
+            }
+        }
+        
+        // Reload the waveform with new boundaries
+        // Add cache-busting parameter to force reload of audio
+        const cacheBuster = Date.now();
+        const newAudioUrl = `/api/audio/${AppState.sessionId}/${termId}?t=${cacheBuster}`;
+        
+        // Render the updated waveform
+        await renderTermWaveform(
+            termId,
+            newAudioUrl,
+            newStartTime,
+            newEndTime
+        );
+        
+        // Restore button state
+        trimBtn.innerHTML = originalText;
+        trimBtn.disabled = false;
+        
+        showSuccess(`Boundaries updated for "${alignment.english}"`);
+        console.log(`Successfully trimmed term ${termId}`);
+        
+    } catch (error) {
+        console.error(`Failed to trim boundaries for term ${termId}:`, error);
+        showError(`Failed to trim boundaries: ${error.message}`);
+        
+        // Restore button state
+        const trimBtn = document.querySelector(`.trim-btn[data-term-id="${termId}"]`);
+        if (trimBtn) {
+            trimBtn.innerHTML = '✂ Trim';
+            trimBtn.disabled = false;
+        }
+    }
 }
 
 /**
@@ -1788,6 +2145,281 @@ function removeManualAdjustmentIndicator(termId) {
     }
     
     console.log(`Manual adjustment indicator removed for term ${termId}`);
+}
+
+/**
+ * Regenerate alignment for a single term
+ * Re-runs the automatic alignment algorithm for just this term
+ * @param {string} termId - Term identifier
+ */
+async function regenerateTerm(termId) {
+    const alignment = AppState.alignments.find(a => a.term_id === termId);
+    if (!alignment) {
+        showError('Term not found');
+        return;
+    }
+    
+    const confirmed = confirm(
+        `Regenerate alignment for "${alignment.english}"?\n\n` +
+        `This will re-run the automatic alignment algorithm for this term only.`
+    );
+    
+    if (!confirmed) {
+        return;
+    }
+    
+    try {
+        // Show loading state
+        const regenBtn = document.querySelector(`.regen-btn[data-term-id="${termId}"]`);
+        if (regenBtn) {
+            regenBtn.disabled = true;
+            regenBtn.innerHTML = '⏳ Regenerating...';
+        }
+        
+        // Call backend API to regenerate this term
+        const response = await fetchWithRetry(`${API_BASE}/session/${AppState.sessionId}/regenerate/${termId}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        const data = await response.json();
+        
+        if (!response.ok) {
+            throw new Error(data.error || 'Failed to regenerate term');
+        }
+        
+        // Update local state with new alignment
+        const updatedTerm = data.data.term;
+        alignment.start_time = updatedTerm.start_time;
+        alignment.end_time = updatedTerm.end_time;
+        alignment.confidence_score = updatedTerm.confidence_score;
+        alignment.is_manually_adjusted = false;
+        
+        // Update UI
+        const startInput = document.getElementById(`start-${termId}`);
+        const endInput = document.getElementById(`end-${termId}`);
+        if (startInput) startInput.value = alignment.start_time.toFixed(2);
+        if (endInput) endInput.value = alignment.end_time.toFixed(2);
+        
+        // Reload waveform
+        const cacheBuster = Date.now();
+        await renderTermWaveform(
+            termId,
+            `/api/audio/${AppState.sessionId}/${termId}?t=${cacheBuster}`,
+            alignment.start_time,
+            alignment.end_time
+        );
+        
+        // Update full waveform
+        updateFullWaveformBoundary(termId, alignment.start_time, alignment.end_time);
+        
+        // Remove manual adjustment indicator if present
+        removeManualAdjustmentIndicator(termId);
+        
+        showSuccess(`"${alignment.english}" regenerated successfully`);
+        
+    } catch (error) {
+        console.error(`Failed to regenerate term ${termId}:`, error);
+        showError(error.message || 'Failed to regenerate alignment');
+    } finally {
+        // Restore button state
+        const regenBtn = document.querySelector(`.regen-btn[data-term-id="${termId}"]`);
+        if (regenBtn) {
+            regenBtn.disabled = false;
+            regenBtn.innerHTML = '🔄 Regenerate';
+        }
+    }
+}
+
+/**
+ * Regenerate alignment for this term and all following terms
+ * Useful when one term's correction affects all subsequent terms
+ * @param {string} termId - Term identifier to start from
+ */
+async function regenerateFromTerm(termId) {
+    const alignment = AppState.alignments.find(a => a.term_id === termId);
+    if (!alignment) {
+        showError('Term not found');
+        return;
+    }
+    
+    // Find the index of this term
+    const termIndex = AppState.alignments.findIndex(a => a.term_id === termId);
+    const remainingCount = AppState.alignments.length - termIndex;
+    
+    const confirmed = confirm(
+        `Regenerate alignment from "${alignment.english}" onwards?\n\n` +
+        `This will re-run automatic alignment for ${remainingCount} term(s), ` +
+        `starting from the end of the previous term.\n\n` +
+        `This may take several minutes as it uses Whisper to verify each term.`
+    );
+    
+    if (!confirmed) {
+        return;
+    }
+    
+    try {
+        // Show loading state
+        const regenFromBtn = document.querySelector(`.regen-from-btn[data-term-id="${termId}"]`);
+        if (regenFromBtn) {
+            regenFromBtn.disabled = true;
+            regenFromBtn.innerHTML = '⏳ Starting...';
+        }
+        
+        // Get the end time of the previous term (or 0 if this is the first term)
+        let startFromTime = 0;
+        if (termIndex > 0) {
+            const previousTerm = AppState.alignments[termIndex - 1];
+            startFromTime = previousTerm.end_time;
+        }
+        
+        // Show progress modal
+        showRegenerationProgress();
+        updateRegenerationProgress(0, 'Starting regeneration...');
+        
+        // Start regeneration (don't await - it will take a while)
+        const regenerationPromise = fetchWithRetry(`${API_BASE}/session/${AppState.sessionId}/regenerate-from/${termId}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                start_from_time: startFromTime
+            })
+        });
+        
+        // Poll for progress
+        let progressInterval = setInterval(async () => {
+            try {
+                const progressResponse = await fetch(`${API_BASE}/session/${AppState.sessionId}/regenerate/progress`);
+                const progressData = await progressResponse.json();
+                
+                if (progressData.success && progressData.data) {
+                    const progress = progressData.data;
+                    console.log('Regeneration progress:', progress);
+                    updateRegenerationProgress(progress.percent, progress.stage);
+                    
+                    // Check if complete or error
+                    if (progress.status === 'complete' || progress.status === 'error') {
+                        clearInterval(progressInterval);
+                        progressInterval = null;
+                        
+                        if (progress.status === 'error') {
+                            hideRegenerationProgress();
+                            throw new Error(progress.stage);
+                        }
+                    }
+                }
+            } catch (error) {
+                console.error('Progress polling error:', error);
+                // Don't stop polling on error - the regeneration might still be running
+            }
+        }, 1000); // Poll every second
+        
+        // Wait for regeneration to complete
+        const response = await regenerationPromise;
+        const data = await response.json();
+        
+        // Stop polling if still running
+        if (progressInterval) {
+            clearInterval(progressInterval);
+            progressInterval = null;
+        }
+        
+        hideRegenerationProgress();
+        
+        if (!response.ok) {
+            throw new Error(data.error || 'Failed to regenerate terms');
+        }
+        
+        // Update local state with all regenerated terms
+        const updatedTerms = data.data.terms;
+        
+        for (const updatedTerm of updatedTerms) {
+            const localAlignment = AppState.alignments.find(a => a.term_id === updatedTerm.term_id);
+            if (localAlignment) {
+                localAlignment.start_time = updatedTerm.start_time;
+                localAlignment.end_time = updatedTerm.end_time;
+                localAlignment.confidence_score = updatedTerm.confidence_score;
+                localAlignment.is_manually_adjusted = false;
+                
+                // Update UI for this term
+                const startInput = document.getElementById(`start-${updatedTerm.term_id}`);
+                const endInput = document.getElementById(`end-${updatedTerm.term_id}`);
+                if (startInput) startInput.value = localAlignment.start_time.toFixed(2);
+                if (endInput) endInput.value = localAlignment.end_time.toFixed(2);
+                
+                // Reload waveform
+                const cacheBuster = Date.now();
+                await renderTermWaveform(
+                    updatedTerm.term_id,
+                    `/api/audio/${AppState.sessionId}/${updatedTerm.term_id}?t=${cacheBuster}`,
+                    localAlignment.start_time,
+                    localAlignment.end_time
+                );
+                
+                // Update full waveform
+                updateFullWaveformBoundary(updatedTerm.term_id, localAlignment.start_time, localAlignment.end_time);
+                
+                // Remove manual adjustment indicator if present
+                removeManualAdjustmentIndicator(updatedTerm.term_id);
+            }
+        }
+        
+        showSuccess(`${updatedTerms.length} term(s) regenerated successfully from "${alignment.english}"`);
+        
+    } catch (error) {
+        console.error(`Failed to regenerate from term ${termId}:`, error);
+        showError(error.message || 'Failed to regenerate alignments');
+    } finally {
+        // Restore button state
+        const regenFromBtn = document.querySelector(`.regen-from-btn[data-term-id="${termId}"]`);
+        if (regenFromBtn) {
+            regenFromBtn.disabled = false;
+            regenFromBtn.innerHTML = '🔄➡ From Here';
+        }
+    }
+}
+
+/**
+ * Show regeneration progress modal
+ */
+function showRegenerationProgress() {
+    // Reuse upload progress UI
+    const progressContainer = elements.uploadProgress || document.getElementById('upload-progress');
+    if (progressContainer) {
+        progressContainer.style.display = 'block';
+        console.log('Regeneration progress modal shown');
+    } else {
+        console.error('Progress container not found');
+    }
+}
+
+/**
+ * Hide regeneration progress modal
+ */
+function hideRegenerationProgress() {
+    const progressContainer = elements.uploadProgress || document.getElementById('upload-progress');
+    if (progressContainer) {
+        progressContainer.style.display = 'none';
+    }
+}
+
+/**
+ * Update regeneration progress display
+ * @param {number} percent - Progress percentage (0-100)
+ * @param {string} stage - Current stage description
+ */
+function updateRegenerationProgress(percent, stage) {
+    console.log(`Progress update: ${percent}% - ${stage}`);
+    if (elements.progressFill) {
+        elements.progressFill.style.width = `${percent}%`;
+    }
+    if (elements.progressText) {
+        elements.progressText.textContent = stage;
+    }
 }
 
 /**

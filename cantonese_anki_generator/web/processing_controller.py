@@ -46,6 +46,20 @@ class ProcessingController:
         self.audio_loader = AudioLoader(target_sample_rate=sample_rate)
         self.boundary_detector = SmartBoundaryDetector(sample_rate=sample_rate)
         self.audio_extractor = AudioExtractor(temp_dir=temp_dir, sample_rate=sample_rate)
+        self.regeneration_progress_callback = None  # Progress callback for regeneration
+        
+        # Initialize dynamic aligner with speech verification
+        try:
+            from cantonese_anki_generator.audio.speech_verification import WhisperVerifier
+            from cantonese_anki_generator.audio.dynamic_alignment import DynamicAligner
+            
+            self.speech_verifier = WhisperVerifier(model_size="base")
+            self.dynamic_aligner = DynamicAligner(speech_verifier=self.speech_verifier)
+            logger.info("Dynamic aligner initialized with Whisper verification")
+        except Exception as e:
+            logger.warning(f"Could not initialize dynamic aligner: {e}")
+            self.speech_verifier = None
+            self.dynamic_aligner = None
     
     def process_upload(self, doc_url: str, audio_file_path: str) -> str:
         """
@@ -335,3 +349,235 @@ class ProcessingController:
         )
         
         return created_session_id
+
+    def regenerate_term_alignment(
+        self, session_id: str, term_id: str, audio_data: np.ndarray, sample_rate: int
+    ) -> TermAlignment:
+        """
+        Regenerate alignment for a single term using targeted Whisper verification.
+        
+        Tests only nearby audio segments to find the best match quickly.
+        
+        Args:
+            session_id: Session identifier
+            term_id: Term identifier to regenerate
+            audio_data: Full audio data array
+            sample_rate: Audio sample rate
+            
+        Returns:
+            Updated TermAlignment object
+            
+        Raises:
+            ValueError: If session or term not found
+        """
+        # Get session and term
+        session = self.session_manager.get_session(session_id)
+        if not session:
+            raise ValueError(f"Session not found: {session_id}")
+        
+        term = None
+        term_index = None
+        for i, t in enumerate(session.terms):
+            if t.term_id == term_id:
+                term = t
+                term_index = i
+                break
+        
+        if not term:
+            raise ValueError(f"Term not found: {term_id}")
+        
+        logger.info(f"Regenerating single term '{term.english}'")
+        
+        # Get context window around this term
+        context_padding = 3.0  # 3 seconds of context on each side
+        context_start = max(0, term.start_time - context_padding)
+        context_end = min(len(audio_data) / sample_rate, term.end_time + context_padding)
+        
+        # Extract context audio
+        start_sample = int(context_start * sample_rate)
+        end_sample = int(context_end * sample_rate)
+        context_audio = audio_data[start_sample:end_sample]
+        
+        # Segment the context audio into candidates
+        segments = self.boundary_detector.segment_audio(
+            context_audio, expected_count=5, start_offset=0.0
+        )
+        
+        logger.info(f"Found {len(segments)} candidate segments")
+        
+        # Test each segment with Whisper if available
+        best_segment = segments[0] if segments else None
+        best_confidence = 0.5
+        
+        if self.speech_verifier and segments:
+            for i, segment in enumerate(segments):
+                try:
+                    # Transcribe this segment
+                    transcription = self.speech_verifier.transcribe_audio_segment(
+                        segment.audio_data, sample_rate
+                    )
+                    
+                    # Compare with expected Cantonese
+                    comparison = self.speech_verifier.compare_transcription_with_expected(
+                        transcription['text'], term.cantonese
+                    )
+                    
+                    # Calculate confidence
+                    confidence = (transcription['confidence'] + comparison['similarity']) / 2
+                    
+                    logger.info(f"  Segment {i}: confidence={confidence:.2f}, match={comparison['is_match']}")
+                    
+                    if confidence > best_confidence:
+                        best_confidence = confidence
+                        best_segment = segment
+                        
+                except Exception as e:
+                    logger.warning(f"  Segment {i}: Whisper failed: {e}")
+                    continue
+        
+        if best_segment:
+            # Convert relative times back to absolute times
+            term.start_time = context_start + best_segment.start_time
+            term.end_time = context_start + best_segment.end_time
+            term.confidence_score = best_confidence
+            term.is_manually_adjusted = False
+            
+            logger.info(f"Best match: {term.start_time:.2f}s - {term.end_time:.2f}s (confidence: {best_confidence:.2f})")
+        
+        # Update session
+        self.session_manager._save_session(session)
+        
+        # Regenerate audio segment
+        self.audio_extractor.update_term_segment(
+            session_id, term, audio_data, sample_rate
+        )
+        
+        return term
+    
+    def regenerate_from_term(
+        self, session_id: str, start_term_id: str, start_from_time: float,
+        audio_data: np.ndarray, sample_rate: int
+    ) -> List[TermAlignment]:
+        """
+        Regenerate alignment for terms using fast smart segmentation only.
+        
+        FAST MODE: Skips Whisper verification, just uses smart boundary detection.
+        This is much faster and works well when you've manually trimmed the previous term.
+        
+        Args:
+            session_id: Session identifier
+            start_term_id: Term identifier to start from
+            start_from_time: Time to start alignment from (end of previous term)
+            audio_data: Full audio data array
+            sample_rate: Audio sample rate
+            
+        Returns:
+            List of updated TermAlignment objects
+            
+        Raises:
+            ValueError: If session or term not found
+        """
+        # Get session
+        session = self.session_manager.get_session(session_id)
+        if not session:
+            raise ValueError(f"Session not found: {session_id}")
+        
+        # Find the starting term index
+        start_index = None
+        for i, term in enumerate(session.terms):
+            if term.term_id == start_term_id:
+                start_index = i
+                break
+        
+        if start_index is None:
+            raise ValueError(f"Term not found: {start_term_id}")
+        
+        # Get the terms to regenerate
+        terms_to_regenerate = session.terms[start_index:]
+        num_terms = len(terms_to_regenerate)
+        
+        logger.info(f"FAST MODE: Regenerating {num_terms} terms starting from '{terms_to_regenerate[0].english}' at {start_from_time:.2f}s")
+        
+        # Report progress
+        if self.regeneration_progress_callback:
+            self.regeneration_progress_callback(
+                0, num_terms, 
+                f'Segmenting audio for {num_terms} terms...'
+            )
+        
+        # Get the audio from start_from_time to the end
+        start_sample = int(start_from_time * sample_rate)
+        remaining_audio = audio_data[start_sample:]
+        remaining_duration = len(remaining_audio) / sample_rate
+        
+        logger.info(f"Remaining audio duration: {remaining_duration:.2f}s for {num_terms} terms")
+        
+        # Calculate expected average duration per term
+        avg_duration = remaining_duration / num_terms
+        logger.info(f"Average duration per term: {avg_duration:.2f}s")
+        
+        # Adjust boundary detector parameters for longer segments
+        original_min_duration = self.boundary_detector.min_segment_duration
+        original_max_duration = self.boundary_detector.max_segment_duration
+        
+        # Set more reasonable durations based on remaining audio
+        self.boundary_detector.min_segment_duration = max(0.5, avg_duration * 0.5)  # At least 0.5s, or half average
+        self.boundary_detector.max_segment_duration = max(5.0, avg_duration * 2.0)  # At least 5s, or double average
+        
+        logger.info(f"Adjusted segment durations: min={self.boundary_detector.min_segment_duration:.2f}s, max={self.boundary_detector.max_segment_duration:.2f}s")
+        
+        try:
+            # Segment the remaining audio using smart boundary detection
+            # This is fast and doesn't require Whisper
+            segments = self.boundary_detector.segment_audio(
+                remaining_audio, expected_count=num_terms, start_offset=0.0
+            )
+            
+            logger.info(f"Created {len(segments)} audio segments for {num_terms} terms")
+            
+            # Log segment durations for debugging
+            for i, seg in enumerate(segments):
+                duration = seg.end_time - seg.start_time
+                logger.info(f"  Segment {i}: {seg.start_time:.2f}s - {seg.end_time:.2f}s (duration: {duration:.2f}s)")
+            
+            # Assign segments to terms sequentially (no Whisper verification)
+            updated_terms = []
+            
+            for i, term in enumerate(terms_to_regenerate):
+                # Report progress
+                if self.regeneration_progress_callback:
+                    self.regeneration_progress_callback(
+                        i, num_terms, 
+                        f'Assigning segment {i+1}/{num_terms}: "{term.english}"'
+                    )
+                
+                # Use the corresponding segment (or last segment if we run out)
+                segment = segments[i] if i < len(segments) else segments[-1]
+                
+                # Update term with segment boundaries
+                term.start_time = start_from_time + segment.start_time
+                term.end_time = start_from_time + segment.end_time
+                term.confidence_score = segment.confidence  # Use boundary detector's confidence
+                term.is_manually_adjusted = False
+                
+                duration = term.end_time - term.start_time
+                logger.info(f"Term {i+1} '{term.english}': {term.start_time:.2f}s - {term.end_time:.2f}s (duration: {duration:.2f}s, confidence: {term.confidence_score:.2f})")
+                
+                # Regenerate audio segment
+                self.audio_extractor.update_term_segment(
+                    session_id, term, audio_data, sample_rate
+                )
+                
+                updated_terms.append(term)
+            
+            # Update session
+            self.session_manager._save_session(session)
+            
+            logger.info(f"FAST MODE: Regeneration complete for {len(updated_terms)} terms")
+            
+            return updated_terms
+            
+        finally:
+            # Restore original parameters
+            self.boundary_detector.min_segment_duration = original_min_duration
+            self.boundary_detector.max_segment_duration = original_max_duration

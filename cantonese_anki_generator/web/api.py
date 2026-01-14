@@ -26,6 +26,9 @@ bp = Blueprint('api', __name__, url_prefix='/api')
 # In-memory progress tracking for generation tasks
 generation_progress = {}
 
+# In-memory progress tracking for regeneration tasks
+regeneration_progress = {}
+
 
 # Task 19.2: Add backend error handling
 # Custom error handler for request entity too large
@@ -293,6 +296,7 @@ def get_session(session_id: str):
     """
     try:
         from cantonese_anki_generator.web.session_manager import SessionManager
+        from cantonese_anki_generator.web.session_models import convert_numpy_types
         
         # Validate session_id format
         if not session_id or not isinstance(session_id, str):
@@ -328,13 +332,14 @@ def get_session(session_id: str):
             }), 404
         
         # Build response with all session data
+        # Convert numpy types to Python native types for JSON serialization
         response_data = {
             'success': True,
             'data': {
                 'session_id': session.session_id,
                 'doc_url': session.doc_url,
                 'audio_file_path': session.audio_file_path,
-                'audio_duration': session.audio_duration,
+                'audio_duration': convert_numpy_types(session.audio_duration),
                 'status': session.status,
                 'created_at': session.created_at.isoformat(),
                 'last_modified': session.last_modified.isoformat(),
@@ -343,12 +348,12 @@ def get_session(session_id: str):
                         'term_id': term.term_id,
                         'english': term.english,
                         'cantonese': term.cantonese,
-                        'start_time': term.start_time,
-                        'end_time': term.end_time,
-                        'original_start': term.original_start,
-                        'original_end': term.original_end,
+                        'start_time': convert_numpy_types(term.start_time),
+                        'end_time': convert_numpy_types(term.end_time),
+                        'original_start': convert_numpy_types(term.original_start),
+                        'original_end': convert_numpy_types(term.original_end),
                         'is_manually_adjusted': term.is_manually_adjusted,
-                        'confidence_score': term.confidence_score,
+                        'confidence_score': convert_numpy_types(term.confidence_score),
                         'audio_segment_url': f'/api/audio/{session_id}/{term.term_id}'
                     }
                     for term in session.terms
@@ -390,6 +395,7 @@ def update_session(session_id: str):
     """
     try:
         from cantonese_anki_generator.web.session_manager import SessionManager
+        from cantonese_anki_generator.web.session_models import convert_numpy_types
         
         # Get session manager from app context
         session_manager = current_app.config.get('SESSION_MANAGER')
@@ -443,7 +449,7 @@ def update_session(session_id: str):
                 'error': 'start_time must be less than end_time'
             }), 400
         
-        # Get session to validate boundaries don't overlap
+        # Get session to validate term exists and check audio duration
         session = session_manager.get_session(session_id)
         if not session:
             return jsonify({
@@ -451,36 +457,18 @@ def update_session(session_id: str):
                 'error': f'Session not found: {session_id}'
             }), 404
         
-        # Find the term being updated and check for overlaps with adjacent terms
-        term_index = None
-        for i, term in enumerate(session.terms):
+        # Find the term being updated
+        term_found = False
+        for term in session.terms:
             if term.term_id == term_id:
-                term_index = i
+                term_found = True
                 break
         
-        if term_index is None:
+        if not term_found:
             return jsonify({
                 'success': False,
                 'error': f'Term not found: {term_id}'
             }), 404
-        
-        # Check overlap with previous term
-        if term_index > 0:
-            prev_term = session.terms[term_index - 1]
-            if start_time < prev_term.end_time:
-                return jsonify({
-                    'success': False,
-                    'error': f'Start time overlaps with previous term (ends at {prev_term.end_time:.2f}s)'
-                }), 400
-        
-        # Check overlap with next term
-        if term_index < len(session.terms) - 1:
-            next_term = session.terms[term_index + 1]
-            if end_time > next_term.start_time:
-                return jsonify({
-                    'success': False,
-                    'error': f'End time overlaps with next term (starts at {next_term.start_time:.2f}s)'
-                }), 400
         
         # Check boundaries are within audio duration
         if end_time > session.audio_duration:
@@ -489,7 +477,7 @@ def update_session(session_id: str):
                 'error': f'End time exceeds audio duration ({session.audio_duration:.2f}s)'
             }), 400
         
-        # Update boundaries
+        # Update boundaries (overlapping is allowed for language learning context)
         success = session_manager.update_boundaries(
             session_id, term_id, start_time, end_time
         )
@@ -546,8 +534,8 @@ def update_session(session_id: str):
             'message': 'Boundaries updated successfully',
             'data': {
                 'term_id': updated_term.term_id,
-                'start_time': updated_term.start_time,
-                'end_time': updated_term.end_time,
+                'start_time': convert_numpy_types(updated_term.start_time),
+                'end_time': convert_numpy_types(updated_term.end_time),
                 'is_manually_adjusted': updated_term.is_manually_adjusted,
                 'audio_segment_url': f'/api/audio/{session_id}/{term_id}'
             }
@@ -639,22 +627,33 @@ def get_audio_segment(session_id: str, term_id: str):
         # Get audio segment file path
         segment_path = audio_extractor.get_segment_path(session_id, term_id)
         
+        logger.info(f"Looking for audio segment at: {segment_path}")
+        logger.info(f"File exists: {os.path.exists(segment_path)}")
+        
         if not os.path.exists(segment_path):
+            logger.error(f"Audio segment file not found: {segment_path}")
             return jsonify({
                 'success': False,
-                'error': f'Audio segment not found: {term_id}'
+                'error': f'Audio segment not found: {term_id}. Path: {segment_path}'
             }), 404
         
         # Serve the audio file
         # Flask's send_file automatically handles range requests for audio streaming
+        logger.info(f"Serving audio segment: {segment_path}")
+        
+        # Convert to absolute path for Flask
+        abs_segment_path = os.path.abspath(segment_path)
+        logger.info(f"Absolute path: {abs_segment_path}")
+        
         return send_file(
-            segment_path,
+            abs_segment_path,
             mimetype='audio/wav',
             as_attachment=False,
             download_name=f'{term_id}.wav'
         )
         
     except Exception as e:
+        logger.error(f"Failed to serve audio segment {term_id}: {e}", exc_info=True)
         return jsonify({
             'success': False,
             'error': f'Failed to serve audio segment: {str(e)}'
@@ -680,9 +679,19 @@ def process_files():
         from cantonese_anki_generator.web.processing_controller import ProcessingController
         from cantonese_anki_generator.web.session_manager import SessionManager
         from cantonese_anki_generator.web.audio_extractor import AudioExtractor
+        from cantonese_anki_generator.web.session_models import convert_numpy_types
         
         # Parse request data
-        data = request.get_json()
+        try:
+            data = request.get_json()
+        except Exception as e:
+            logger.warning(f"Failed to parse JSON data: {e}")
+            return jsonify({
+                'success': False,
+                'error': 'Invalid JSON data provided',
+                'error_code': 'INVALID_JSON'
+            }), 400
+        
         if not data:
             logger.warning("No JSON data provided in process request")
             return jsonify({
@@ -774,8 +783,8 @@ def process_files():
             'data': {
                 'session_id': session_id,
                 'total_terms': len(session.terms),
-                'audio_duration': session.audio_duration,
-                'low_confidence_count': sum(1 for term in session.terms if term.confidence_score < 0.6)
+                'audio_duration': convert_numpy_types(session.audio_duration),
+                'low_confidence_count': sum(1 for term in session.terms if convert_numpy_types(term.confidence_score) < 0.6)
             }
         }), 200
         
@@ -850,6 +859,7 @@ def reset_term(session_id: str, term_id: str):
     try:
         from cantonese_anki_generator.web.session_manager import SessionManager
         from cantonese_anki_generator.web.audio_extractor import AudioExtractor
+        from cantonese_anki_generator.web.session_models import convert_numpy_types
         
         # Get session manager from app context
         session_manager = current_app.config.get('SESSION_MANAGER')
@@ -923,8 +933,8 @@ def reset_term(session_id: str, term_id: str):
             'message': 'Term boundaries reset to original alignment',
             'data': {
                 'term_id': term_id,
-                'start_time': original_start,
-                'end_time': original_end,
+                'start_time': convert_numpy_types(original_start),
+                'end_time': convert_numpy_types(original_end),
                 'is_manually_adjusted': False,
                 'audio_segment_url': f'/api/audio/{session_id}/{term_id}'
             }
@@ -1016,6 +1026,270 @@ def reset_all_terms(session_id: str):
         }), 500
 
 
+@bp.route('/session/<session_id>/regenerate/<term_id>', methods=['POST'])
+def regenerate_term(session_id: str, term_id: str):
+    """
+    Regenerate alignment for a single term.
+    
+    Re-runs the automatic alignment algorithm for just this term.
+    
+    Args:
+        session_id: The session identifier
+        term_id: The term identifier
+        
+    Returns:
+        JSON response with updated term alignment
+    """
+    try:
+        from cantonese_anki_generator.web.session_manager import SessionManager
+        from cantonese_anki_generator.web.processing_controller import ProcessingController
+        from cantonese_anki_generator.web.audio_extractor import AudioExtractor
+        from cantonese_anki_generator.web.session_models import convert_numpy_types
+        
+        # Get session manager and processing controller
+        session_manager = current_app.config.get('SESSION_MANAGER')
+        if not session_manager:
+            session_manager = SessionManager()
+        
+        processing_controller = current_app.config.get('PROCESSING_CONTROLLER')
+        if not processing_controller:
+            audio_extractor = AudioExtractor(temp_dir='temp/audio_segments')
+            processing_controller = ProcessingController(
+                session_manager=session_manager,
+                temp_dir='temp/audio_segments'
+            )
+        
+        # Verify session exists
+        session = session_manager.get_session(session_id)
+        if not session:
+            return jsonify({
+                'success': False,
+                'error': f'Session not found: {session_id}'
+            }), 404
+        
+        # Load audio data
+        audio_extractor = AudioExtractor(temp_dir='temp/audio_segments')
+        audio_data, sample_rate = audio_extractor.load_audio_for_session(
+            session.audio_file_path
+        )
+        
+        # Regenerate term alignment
+        updated_term = processing_controller.regenerate_term_alignment(
+            session_id, term_id, audio_data, sample_rate
+        )
+        
+        return jsonify({
+            'success': True,
+            'message': f'Term "{updated_term.english}" regenerated successfully',
+            'data': {
+                'term': {
+                    'term_id': updated_term.term_id,
+                    'english': updated_term.english,
+                    'cantonese': updated_term.cantonese,
+                    'start_time': convert_numpy_types(updated_term.start_time),
+                    'end_time': convert_numpy_types(updated_term.end_time),
+                    'confidence_score': convert_numpy_types(updated_term.confidence_score),
+                    'is_manually_adjusted': updated_term.is_manually_adjusted,
+                    'audio_segment_url': f'/api/audio/{session_id}/{term_id}'
+                }
+            }
+        }), 200
+        
+    except ValueError as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 404
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': f'Failed to regenerate term: {str(e)}'
+        }), 500
+
+
+@bp.route('/session/<session_id>/regenerate-from/<term_id>', methods=['POST'])
+def regenerate_from_term(session_id: str, term_id: str):
+    """
+    Regenerate alignment for a term and all following terms.
+    
+    Re-runs the automatic alignment algorithm starting from the specified term,
+    using the provided start time as the beginning point.
+    
+    Args:
+        session_id: The session identifier
+        term_id: The term identifier to start from
+        
+    Expects JSON body:
+        {
+            "start_from_time": 12.5  # Time in seconds to start alignment from
+        }
+        
+    Returns:
+        JSON response with updated term alignments
+    """
+    try:
+        from cantonese_anki_generator.web.session_manager import SessionManager
+        from cantonese_anki_generator.web.processing_controller import ProcessingController
+        from cantonese_anki_generator.web.audio_extractor import AudioExtractor
+        from cantonese_anki_generator.web.session_models import convert_numpy_types
+        
+        # Initialize progress
+        regeneration_progress[session_id] = {
+            'percent': 0,
+            'stage': 'Starting regeneration...',
+            'status': 'processing'
+        }
+        
+        # Parse request body
+        data = request.get_json()
+        if not data or 'start_from_time' not in data:
+            regeneration_progress[session_id] = {
+                'percent': 0,
+                'stage': 'Error: Missing start_from_time',
+                'status': 'error'
+            }
+            return jsonify({
+                'success': False,
+                'error': 'Missing required field: start_from_time'
+            }), 400
+        
+        start_from_time = float(data['start_from_time'])
+        
+        # Get session manager and processing controller
+        session_manager = current_app.config.get('SESSION_MANAGER')
+        if not session_manager:
+            session_manager = SessionManager()
+        
+        processing_controller = current_app.config.get('PROCESSING_CONTROLLER')
+        if not processing_controller:
+            audio_extractor = AudioExtractor(temp_dir='temp/audio_segments')
+            processing_controller = ProcessingController(
+                session_manager=session_manager,
+                temp_dir='temp/audio_segments'
+            )
+        
+        # Verify session exists
+        session = session_manager.get_session(session_id)
+        if not session:
+            regeneration_progress[session_id] = {
+                'percent': 0,
+                'stage': 'Error: Session not found',
+                'status': 'error'
+            }
+            return jsonify({
+                'success': False,
+                'error': f'Session not found: {session_id}'
+            }), 404
+        
+        regeneration_progress[session_id] = {
+            'percent': 10,
+            'stage': 'Loading audio...',
+            'status': 'processing'
+        }
+        
+        # Load audio data
+        audio_extractor = AudioExtractor(temp_dir='temp/audio_segments')
+        audio_data, sample_rate = audio_extractor.load_audio_for_session(
+            session.audio_file_path
+        )
+        
+        regeneration_progress[session_id] = {
+            'percent': 20,
+            'stage': 'Regenerating alignments...',
+            'status': 'processing'
+        }
+        
+        # Create a progress callback
+        def progress_callback(current, total, message):
+            percent = 20 + int((current / total) * 70)  # 20-90%
+            regeneration_progress[session_id] = {
+                'percent': percent,
+                'stage': message,
+                'status': 'processing'
+            }
+        
+        # Store progress callback in processing controller
+        processing_controller.regeneration_progress_callback = progress_callback
+        
+        # Regenerate from term onwards
+        updated_terms = processing_controller.regenerate_from_term(
+            session_id, term_id, start_from_time, audio_data, sample_rate
+        )
+        
+        regeneration_progress[session_id] = {
+            'percent': 100,
+            'stage': 'Complete!',
+            'status': 'complete'
+        }
+        
+        # Convert terms to JSON
+        terms_data = []
+        for term in updated_terms:
+            terms_data.append({
+                'term_id': term.term_id,
+                'english': term.english,
+                'cantonese': term.cantonese,
+                'start_time': convert_numpy_types(term.start_time),
+                'end_time': convert_numpy_types(term.end_time),
+                'confidence_score': convert_numpy_types(term.confidence_score),
+                'is_manually_adjusted': term.is_manually_adjusted,
+                'audio_segment_url': f'/api/audio/{session_id}/{term.term_id}'
+            })
+        
+        return jsonify({
+            'success': True,
+            'message': f'{len(updated_terms)} term(s) regenerated successfully',
+            'data': {
+                'terms': terms_data,
+                'count': len(updated_terms)
+            }
+        }), 200
+        
+    except ValueError as e:
+        regeneration_progress[session_id] = {
+            'percent': 0,
+            'stage': f'Error: {str(e)}',
+            'status': 'error'
+        }
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 404
+    except Exception as e:
+        regeneration_progress[session_id] = {
+            'percent': 0,
+            'stage': f'Error: {str(e)}',
+            'status': 'error'
+        }
+        return jsonify({
+            'success': False,
+            'error': f'Failed to regenerate terms: {str(e)}'
+        }), 500
+
+
+@bp.route('/session/<session_id>/regenerate/progress', methods=['GET'])
+def get_regeneration_progress(session_id: str):
+    """
+    Get the progress of regeneration for a session.
+    
+    Args:
+        session_id: The session identifier
+        
+    Returns:
+        JSON response with progress information
+    """
+    progress = regeneration_progress.get(session_id, {
+        'percent': 0,
+        'stage': 'Not started',
+        'status': 'idle'
+    })
+    
+    return jsonify({
+        'success': True,
+        'data': progress
+    }), 200
+
+
 @bp.route('/session/<session_id>/generate', methods=['POST'])
 def generate_anki_package(session_id: str):
     """
@@ -1099,7 +1373,8 @@ def generate_anki_package(session_id: str):
             # Create vocabulary entry
             vocab_entry = VocabularyEntry(
                 english=term.english,
-                cantonese=term.cantonese
+                cantonese=term.cantonese,
+                row_index=i
             )
             
             # Get audio segment path (already extracted with current boundaries)
@@ -1121,7 +1396,8 @@ def generate_anki_package(session_id: str):
                 start_time=term.start_time,
                 end_time=term.end_time,
                 audio_data=np.array([]),  # Not needed for package generation
-                confidence=term.confidence_score
+                confidence=term.confidence_score,
+                segment_id=term.term_id
             )
             
             # Create aligned pair
@@ -1145,8 +1421,9 @@ def generate_anki_package(session_id: str):
         }
         logger.info("Generating Anki package...")
         
-        # Create output directory if it doesn't exist
-        output_dir = Path('output')
+        # Create output directory if it doesn't exist (use absolute path from project root)
+        project_root = Path(__file__).parent.parent.parent  # Go up from web/api.py to project root
+        output_dir = project_root / 'output'
         output_dir.mkdir(parents=True, exist_ok=True)
         
         # Generate output filename
@@ -1308,8 +1585,9 @@ def download_package(session_id: str, filename: str):
         # Secure the filename
         filename = secure_filename(filename)
         
-        # Construct file path
-        output_dir = Path('output')
+        # Construct file path (use absolute path from project root)
+        project_root = Path(__file__).parent.parent.parent  # Go up from web/api.py to project root
+        output_dir = project_root / 'output'
         filepath = output_dir / filename
         
         if not filepath.exists():
