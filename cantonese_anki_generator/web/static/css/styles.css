@@ -73,6 +73,12 @@ section h2 {
     margin-bottom: 20px;
 }
 
+.section-header .header-left {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+}
+
 .section-header h2 {
     margin-bottom: 0;
     border-bottom: none;
@@ -549,6 +555,70 @@ section h2 {
     color: #7f8c8d;
 }
 
+/* Boundary Controls - Manual Time Adjustment */
+.boundary-controls {
+    margin-top: 8px;
+}
+
+.time-inputs {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.time-inputs label {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.85em;
+    color: #555;
+}
+
+.time-input {
+    width: 70px;
+    padding: 4px 6px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 0.9em;
+    text-align: center;
+}
+
+.time-input:focus {
+    outline: none;
+    border-color: #3498db;
+    box-shadow: 0 0 0 2px rgba(52, 152, 219, 0.1);
+}
+
+.trim-btn {
+    padding: 6px 12px;
+    background-color: #27ae60;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.85em;
+    font-weight: 600;
+    transition: all 0.2s;
+    white-space: nowrap;
+}
+
+.trim-btn:hover {
+    background-color: #229954;
+    transform: translateY(-1px);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.trim-btn:active {
+    transform: translateY(0);
+}
+
+.trim-btn:disabled {
+    background-color: #95a5a6;
+    cursor: not-allowed;
+    transform: none;
+}
+
 /* Controls Cell */
 .controls-cell {
     display: flex;
@@ -626,6 +696,31 @@ section h2 {
 
 .reset-btn:hover {
     background-color: #e67e22;
+}
+
+.regen-btn,
+.regen-from-btn {
+    width: 100%;
+    padding: 6px;
+    background-color: #3498db;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.85em;
+    transition: background-color 0.3s;
+    margin-bottom: 4px;
+}
+
+.regen-btn:hover,
+.regen-from-btn:hover {
+    background-color: #2980b9;
+}
+
+.regen-btn:disabled,
+.regen-from-btn:disabled {
+    background-color: #95a5a6;
+    cursor: not-allowed;
 }
 
 .adjustment-indicator {

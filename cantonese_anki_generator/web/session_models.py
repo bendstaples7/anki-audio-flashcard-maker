@@ -7,6 +7,20 @@ from datetime import datetime
 from typing import List, Dict, Any
 import json
 import uuid
+import numpy as np
+
+
+def convert_numpy_types(obj):
+    """Convert numpy types to Python native types for JSON serialization."""
+    if isinstance(obj, (np.integer, np.floating)):
+        return float(obj)
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif isinstance(obj, dict):
+        return {k: convert_numpy_types(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        return [convert_numpy_types(item) for item in obj]
+    return obj
 
 
 @dataclass
@@ -25,7 +39,7 @@ class TermAlignment:
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
-        return asdict(self)
+        return convert_numpy_types(asdict(self))
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'TermAlignment':
