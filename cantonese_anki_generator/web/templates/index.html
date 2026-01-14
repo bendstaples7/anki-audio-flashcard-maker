@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Manual Audio Alignment - Cantonese Anki Generator</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+    <!-- WaveSurfer.js library -->
+    <script src="https://unpkg.com/wavesurfer.js@7.7.3/dist/wavesurfer.min.js"></script>
+    <script src="https://unpkg.com/wavesurfer.js@7.7.3/dist/plugins/regions.min.js"></script>
+</head>
+<body>
+    <div id="app">
+        <header>
+            <h1>Manual Audio Alignment</h1>
+            <p>Review and adjust audio-term alignments for your Cantonese vocabulary</p>
+        </header>
+        
+        <main>
+            <!-- File Upload Section -->
+            <section id="upload-section" class="card">
+                <h2>Upload Files</h2>
+                <p class="section-description">Upload your vocabulary document and audio file to begin</p>
+                
+                <form id="upload-form" class="upload-form">
+                    <div class="form-group">
+                        <label for="doc-url">
+                            <span class="label-text">Google Docs/Sheets URL</span>
+                            <span class="label-hint">Paste the URL of your vocabulary document</span>
+                        </label>
+                        <input 
+                            type="url" 
+                            id="doc-url" 
+                            name="doc-url" 
+                            placeholder="https://docs.google.com/..." 
+                            required
+                        >
+                        <div class="validation-feedback" id="url-feedback"></div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="audio-file">
+                            <span class="label-text">Audio File</span>
+                            <span class="label-hint">Select an MP3, WAV, or M4A file</span>
+                        </label>
+                        <div class="file-input-wrapper">
+                            <input 
+                                type="file" 
+                                id="audio-file" 
+                                name="audio-file" 
+                                accept=".mp3,.wav,.m4a,audio/mpeg,audio/wav,audio/x-m4a" 
+                                required
+                            >
+                            <div class="file-input-display">
+                                <span class="file-icon">📁</span>
+                                <span class="file-name">No file selected</span>
+                            </div>
+                        </div>
+                        <div class="validation-feedback" id="file-feedback"></div>
+                    </div>
+                    
+                    <div class="form-actions">
+                        <button type="submit" id="process-btn" class="btn btn-primary" disabled>
+                            <span class="btn-icon">⚙️</span>
+                            Process
+                        </button>
+                        <div class="upload-progress" id="upload-progress" style="display: none;">
+                            <div class="progress-bar">
+                                <div class="progress-fill" id="progress-fill"></div>
+                            </div>
+                            <span class="progress-text" id="progress-text">Uploading...</span>
+                        </div>
+                    </div>
+                </form>
+            </section>
+            
+            <!-- Alignment Review Section -->
+            <section id="alignment-section" class="card" style="display: none;">
+                <div class="section-header">
+                    <h2>Alignment Review</h2>
+                    <div class="control-buttons">
+                        <button id="save-btn" class="btn btn-secondary">
+                            <span class="btn-icon">💾</span>
+                            Save Progress
+                        </button>
+                        <button id="reset-all-btn" class="btn btn-warning">
+                            <span class="btn-icon">↺</span>
+                            Reset All
+                        </button>
+                        <button id="generate-btn" class="btn btn-success">
+                            <span class="btn-icon">📦</span>
+                            Generate Anki Deck
+                        </button>
+                    </div>
+                </div>
+                
+                <!-- Full Waveform Overview -->
+                <div id="full-waveform-container" class="waveform-overview">
+                    <h3>Full Audio Overview</h3>
+                    <div class="waveform-controls">
+                        <div class="zoom-controls">
+                            <button id="zoom-out-btn" class="btn btn-icon" title="Zoom Out">−</button>
+                            <input type="range" id="zoom-slider" min="1" max="100" value="1" class="zoom-slider">
+                            <button id="zoom-in-btn" class="btn btn-icon" title="Zoom In">+</button>
+                        </div>
+                        <div class="zoom-info">
+                            <span id="zoom-level">Zoom: 1x</span>
+                            <span id="time-range">0:00 - 0:00</span>
+                        </div>
+                    </div>
+                    <div id="full-waveform" class="waveform-display"></div>
+                </div>
+                
+                <!-- Alignment Table -->
+                <div id="alignment-table-container" class="alignment-table-wrapper">
+                    <div class="table-controls">
+                        <h3>Term Alignments</h3>
+                        <div class="filter-controls">
+                            <label>
+                                <input type="checkbox" id="show-low-confidence">
+                                Show only low confidence
+                            </label>
+                            <select id="sort-by">
+                                <option value="order">Original order</option>
+                                <option value="confidence">Confidence (low first)</option>
+                                <option value="adjusted">Manually adjusted</option>
+                            </select>
+                            <button id="quality-help-btn" class="btn btn-icon" title="About quality indicators">?</button>
+                        </div>
+                    </div>
+                    
+                    <!-- Quality Indicator Help Panel -->
+                    <div id="quality-help-panel" class="help-panel" style="display: none;">
+                        <div class="help-panel-header">
+                            <h4>Understanding Quality Indicators</h4>
+                            <button id="close-help-btn" class="btn btn-icon">×</button>
+                        </div>
+                        <div class="help-panel-content">
+                            <p>Quality indicators show how confident the automatic alignment system is about each term's boundaries.</p>
+                            
+                            <div class="help-indicator-examples">
+                                <div class="help-indicator-item">
+                                    <div class="quality-indicator high">✓</div>
+                                    <div class="help-indicator-text">
+                                        <strong>High Confidence (80-100%)</strong>
+                                        <p>The automatic alignment is likely accurate. These terms typically have clear audio boundaries and good voice activity detection.</p>
+                                    </div>
+                                </div>
+                                
+                                <div class="help-indicator-item">
+                                    <div class="quality-indicator medium">⚠</div>
+                                    <div class="help-indicator-text">
+                                        <strong>Medium Confidence (60-79%)</strong>
+                                        <p>The alignment may need review. Consider listening to verify the boundaries are correct.</p>
+                                    </div>
+                                </div>
+                                
+                                <div class="help-indicator-item">
+                                    <div class="quality-indicator low">✗</div>
+                                    <div class="help-indicator-text">
+                                        <strong>Low Confidence (0-59%)</strong>
+                                        <p>Manual adjustment recommended. These terms may have unclear boundaries, background noise, or overlapping speech.</p>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="help-tips">
+                                <h5>Tips:</h5>
+                                <ul>
+                                    <li>Use the "Show only low confidence" filter to focus on terms that need attention</li>
+                                    <li>Sort by "Confidence (low first)" to review problematic terms first</li>
+                                    <li>Listen to each term and adjust boundaries as needed using the draggable markers</li>
+                                    <li>Low confidence doesn't always mean incorrect - verify by listening</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="alignment-table">
+                        <div class="table-header">
+                            <div class="col-term">Term</div>
+                            <div class="col-waveform">Waveform</div>
+                            <div class="col-controls">Controls</div>
+                            <div class="col-quality">Quality</div>
+                        </div>
+                        <div id="alignment-rows" class="table-body">
+                            <!-- Term rows will be dynamically inserted here -->
+                        </div>
+                    </div>
+                </div>
+            </section>
+            
+            <!-- Generation Progress Section -->
+            <section id="generation-section" class="card" style="display: none;">
+                <h2>Generating Anki Deck</h2>
+                <div class="generation-progress">
+                    <div class="progress-bar large">
+                        <div class="progress-fill" id="generation-progress-fill"></div>
+                    </div>
+                    <p class="progress-text" id="generation-status">Preparing...</p>
+                    <div class="generation-details" id="generation-details"></div>
+                </div>
+            </section>
+            
+            <!-- Generation Complete Section -->
+            <section id="complete-section" class="card" style="display: none;">
+                <h2>✓ Generation Complete</h2>
+                <div class="completion-summary">
+                    <div class="summary-stats">
+                        <div class="stat">
+                            <span class="stat-label">Total Terms</span>
+                            <span class="stat-value" id="total-terms">0</span>
+                        </div>
+                        <div class="stat">
+                            <span class="stat-label">Manually Adjusted</span>
+                            <span class="stat-value" id="adjusted-terms">0</span>
+                        </div>
+                        <div class="stat">
+                            <span class="stat-label">File Size</span>
+                            <span class="stat-value" id="file-size">0 MB</span>
+                        </div>
+                    </div>
+                    <div class="download-section">
+                        <button id="download-btn" class="btn btn-primary btn-large">
+                            <span class="btn-icon">⬇️</span>
+                            Download Anki Deck
+                        </button>
+                        <p class="download-hint">Your .apkg file is ready to import into Anki</p>
+                    </div>
+                    <div class="adjusted-terms-list" id="adjusted-terms-list"></div>
+                </div>
+            </section>
+        </main>
+        
+        <!-- Error Toast -->
+        <div id="error-toast" class="toast toast-error" style="display: none;">
+            <span class="toast-icon">⚠️</span>
+            <span class="toast-message" id="error-message"></span>
+            <button class="toast-close" onclick="hideError()">×</button>
+        </div>
+        
+        <!-- Success Toast -->
+        <div id="success-toast" class="toast toast-success" style="display: none;">
+            <span class="toast-icon">✓</span>
+            <span class="toast-message" id="success-message"></span>
+            <button class="toast-close" onclick="hideSuccess()">×</button>
+        </div>
+    </div>
+    
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>
