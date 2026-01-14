@@ -46,4 +46,10 @@ setup(
             "mypy>=0.950",
         ],
     },
+    entry_points={
+        "console_scripts": [
+            "cantonese-anki-generator=cantonese_anki_generator.main:main",
+            "cantonese-anki-gui=cantonese_anki_generator.gui.launcher:main",
+        ],
+    },
 )

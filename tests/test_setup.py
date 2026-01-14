@@ -45,11 +45,10 @@ def test_imports():
         assert hasattr(config, 'Config')
         print("✓ Configuration module imported successfully")
         
-        return True
         
     except Exception as e:
         print(f"✗ Import test failed: {e}")
-        return False
+        assert False, f"Import test failed: {e}"
 
 def test_project_structure():
     """Test that all required directories and files exist."""
@@ -78,15 +77,14 @@ def test_project_structure():
     for directory in required_dirs:
         if not os.path.isdir(directory):
             print(f"✗ Missing directory: {directory}")
-            return False
+            assert False, f"Missing directory: {directory}"
     
     for file_path in required_files:
         if not os.path.isfile(file_path):
             print(f"✗ Missing file: {file_path}")
-            return False
+            assert False, f"Missing file: {file_path}"
     
     print("✓ All required directories and files exist")
-    return True
 
 if __name__ == "__main__":
     print("Testing Cantonese Anki Generator setup...")

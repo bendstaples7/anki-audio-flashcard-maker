@@ -14,6 +14,69 @@ import librosa
 import soundfile as sf
 from scipy.io import wavfile
 
+# Try to import pydub for additional M4A support
+try:
+    from pydub import AudioSegment
+    from pydub.utils import which
+    import shutil
+    PYDUB_AVAILABLE = True
+    
+    # Auto-configure FFmpeg path for pydub if needed
+    def _configure_pydub_ffmpeg():
+        """Configure pydub to use FFmpeg if available."""
+        # Check if FFmpeg is already available in PATH
+        if shutil.which('ffmpeg') and shutil.which('ffprobe'):
+            return True
+            
+        # Try to find FFmpeg in common Windows installation locations
+        import os
+        from pathlib import Path
+        
+        possible_paths = [
+            # WinGet installation path
+            Path.home() / "AppData/Local/Microsoft/WinGet/Packages",
+            # Chocolatey path
+            Path("C:/ProgramData/chocolatey/bin"),
+            # Manual installation paths
+            Path("C:/ffmpeg/bin"),
+            Path("C:/Program Files/ffmpeg/bin"),
+        ]
+        
+        for base_path in possible_paths:
+            if base_path.exists():
+                # Look for FFmpeg in WinGet packages
+                if "WinGet" in str(base_path):
+                    for pkg_dir in base_path.glob("*ffmpeg*"):
+                        ffmpeg_bin = pkg_dir / "ffmpeg-*" / "bin"
+                        ffmpeg_bins = list(ffmpeg_bin.parent.glob("ffmpeg-*/bin"))
+                        if ffmpeg_bins:
+                            ffmpeg_path = ffmpeg_bins[0] / "ffmpeg.exe"
+                            ffprobe_path = ffmpeg_bins[0] / "ffprobe.exe"
+                            if ffmpeg_path.exists() and ffprobe_path.exists():
+                                AudioSegment.converter = str(ffmpeg_path)
+                                AudioSegment.ffmpeg = str(ffmpeg_path)
+                                AudioSegment.ffprobe = str(ffprobe_path)
+                                logger.info(f"Configured pydub to use FFmpeg at: {ffmpeg_path}")
+                                return True
+                else:
+                    # Direct path check
+                    ffmpeg_path = base_path / "ffmpeg.exe"
+                    ffprobe_path = base_path / "ffprobe.exe"
+                    if ffmpeg_path.exists() and ffprobe_path.exists():
+                        AudioSegment.converter = str(ffmpeg_path)
+                        AudioSegment.ffmpeg = str(ffmpeg_path)
+                        AudioSegment.ffprobe = str(ffprobe_path)
+                        logger.info(f"Configured pydub to use FFmpeg at: {ffmpeg_path}")
+                        return True
+        
+        return False
+    
+    # Try to configure FFmpeg automatically
+    _configure_pydub_ffmpeg()
+    
+except ImportError:
+    PYDUB_AVAILABLE = False
+
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +134,50 @@ class AudioLoader:
         
         return path
     
+    def _convert_m4a_to_wav_if_needed(self, file_path: str) -> str:
+        """
+        Convert M4A file to WAV if needed for better compatibility.
+        
+        Args:
+            file_path: Path to the audio file
+            
+        Returns:
+            Path to the audio file (original or converted WAV)
+        """
+        path = Path(file_path)
+        
+        # If it's not M4A, return as-is
+        if path.suffix.lower() not in ['.m4a', '.mp4', '.aac']:
+            return str(path)
+        
+        # Check if we can load it directly first
+        try:
+            # Quick test load
+            librosa.load(str(path), sr=None, duration=0.1)
+            return str(path)  # Works fine, no conversion needed
+        except Exception:
+            pass  # Need to convert
+        
+        # Create WAV version in temp directory
+        temp_dir = Path.cwd() / "temp"
+        temp_dir.mkdir(exist_ok=True)
+        
+        wav_path = temp_dir / f"{path.stem}_converted.wav"
+        
+        # Try conversion with pydub if available
+        if PYDUB_AVAILABLE:
+            try:
+                logger.info(f"Converting {path.name} to WAV for better compatibility...")
+                audio_segment = AudioSegment.from_file(str(path))
+                audio_segment.export(str(wav_path), format="wav")
+                logger.info(f"Converted to: {wav_path}")
+                return str(wav_path)
+            except Exception as e:
+                logger.warning(f"Pydub conversion failed: {e}")
+        
+        # If conversion fails, return original and let other methods handle it
+        return str(path)
+
     def load_audio(self, file_path: str) -> Tuple[np.ndarray, int]:
         """
         Load and validate audio file with preprocessing.
@@ -86,13 +193,127 @@ class AudioLoader:
         """
         path = self.validate_file_path(file_path)
         
+        # Try to convert M4A to WAV if needed for better compatibility
+        working_path = self._convert_m4a_to_wav_if_needed(str(path))
+        
         try:
-            # Load audio using librosa for robust format support
-            audio_data, sample_rate = librosa.load(
-                str(path), 
-                sr=self.target_sample_rate,
-                mono=True  # Convert to mono for consistent processing
-            )
+            # Load audio using librosa with multiple fallback methods for M4A support
+            audio_data = None
+            sample_rate = None
+            
+            # Method 1: Try standard librosa loading
+            try:
+                audio_data, sample_rate = librosa.load(
+                    working_path, 
+                    sr=self.target_sample_rate,
+                    mono=True  # Convert to mono for consistent processing
+                )
+            except Exception as e1:
+                # Method 2: Try with different backend for M4A files
+                try:
+                    # Force audioread backend which handles M4A better
+                    audio_data, sample_rate = librosa.load(
+                        working_path,
+                        sr=self.target_sample_rate,
+                        mono=True,
+                        res_type='kaiser_fast'  # Faster resampling
+                    )
+                except Exception as e2:
+                    # Method 3: Try loading without resampling first
+                    try:
+                        audio_data, original_sr = librosa.load(
+                            working_path,
+                            sr=None,  # Keep original sample rate
+                            mono=True
+                        )
+                        # Resample manually if needed
+                        if original_sr != self.target_sample_rate:
+                            audio_data = librosa.resample(
+                                audio_data, 
+                                orig_sr=original_sr, 
+                                target_sr=self.target_sample_rate
+                            )
+                        sample_rate = self.target_sample_rate
+                    except Exception as e3:
+                        # Method 4: Try pydub for M4A files (if available)
+                        if PYDUB_AVAILABLE and Path(working_path).suffix.lower() in ['.m4a', '.mp4', '.aac']:
+                            try:
+                                # Load with pydub
+                                audio_segment = AudioSegment.from_file(working_path)
+                                # Convert to mono and get raw audio data
+                                audio_segment = audio_segment.set_channels(1)
+                                # Convert to numpy array
+                                audio_data = np.array(audio_segment.get_array_of_samples(), dtype=np.float32)
+                                # Normalize to [-1, 1] range
+                                audio_data = audio_data / (2**15)  # 16-bit audio normalization
+                                original_sr = audio_segment.frame_rate
+                                
+                                # Resample if needed
+                                if original_sr != self.target_sample_rate:
+                                    audio_data = librosa.resample(
+                                        audio_data, 
+                                        orig_sr=original_sr, 
+                                        target_sr=self.target_sample_rate
+                                    )
+                                sample_rate = self.target_sample_rate
+                            except Exception as e4:
+                                # Check if this is an M4A compatibility issue
+                                if Path(str(path)).suffix.lower() in ['.m4a', '.mp4', '.aac']:
+                                    raise AudioValidationError(
+                                        f"M4A/MP4 audio format compatibility issue with {Path(str(path)).name}.\n\n"
+                                        f"🔧 Quick Fix Options:\n"
+                                        f"1. Convert to WAV format (recommended):\n"
+                                        f"   • Open your M4A file in any audio player\n"
+                                        f"   • Export/Save As → WAV format\n"
+                                        f"   • Use the WAV file instead\n\n"
+                                        f"2. Convert online:\n"
+                                        f"   • Visit cloudconvert.com or convertio.co\n"
+                                        f"   • Upload your M4A file\n"
+                                        f"   • Convert to WAV and download\n\n"
+                                        f"3. Use VLC Media Player:\n"
+                                        f"   • Media → Convert/Save\n"
+                                        f"   • Add your M4A file\n"
+                                        f"   • Choose WAV profile → Start\n\n"
+                                        f"WAV format provides the best compatibility and will work reliably.\n"
+                                        f"Tried methods: librosa, pydub, audioread - all failed with M4A codec issues."
+                                    )
+                                else:
+                                    raise AudioValidationError(
+                                        f"Failed to load audio file {path}. Tried all methods:\n"
+                                        f"Method 1 (librosa): {str(e1)}\n"
+                                        f"Method 2 (librosa fast): {str(e2)}\n" 
+                                        f"Method 3 (librosa no resample): {str(e3)}\n"
+                                        f"Method 4 (pydub): {str(e4)}\n"
+                                        f"Consider converting to WAV format for better compatibility."
+                                    )
+                        else:
+                            # Check if this is an M4A compatibility issue
+                            if Path(str(path)).suffix.lower() in ['.m4a', '.mp4', '.aac']:
+                                raise AudioValidationError(
+                                    f"M4A/MP4 audio format compatibility issue with {Path(str(path)).name}.\n\n"
+                                    f"🔧 Quick Fix Options:\n"
+                                    f"1. Convert to WAV format (recommended):\n"
+                                    f"   • Open your M4A file in any audio player\n"
+                                    f"   • Export/Save As → WAV format\n"
+                                    f"   • Use the WAV file instead\n\n"
+                                    f"2. Convert online:\n"
+                                    f"   • Visit cloudconvert.com or convertio.co\n"
+                                    f"   • Upload your M4A file\n"
+                                    f"   • Convert to WAV and download\n\n"
+                                    f"3. Use VLC Media Player:\n"
+                                    f"   • Media → Convert/Save\n"
+                                    f"   • Add your M4A file\n"
+                                    f"   • Choose WAV profile → Start\n\n"
+                                    f"WAV format provides the best compatibility and will work reliably."
+                                )
+                            else:
+                                raise AudioValidationError(
+                                    f"Failed to load audio file {path}. Tried multiple methods:\n"
+                                    f"Method 1: {str(e1)}\n"
+                                    f"Method 2: {str(e2)}\n" 
+                                    f"Method 3: {str(e3)}\n"
+                                    f"Consider converting to WAV format for better compatibility."
+                                )
             
             # Validate audio properties
             self._validate_audio_properties(audio_data, sample_rate, str(path))
@@ -198,20 +419,48 @@ class AudioLoader:
         path = self.validate_file_path(file_path)
         
         try:
-            # Use librosa to get basic info
-            duration = librosa.get_duration(filename=str(path))
+            # Use updated librosa API to get basic info with multiple fallback methods
+            try:
+                # Try the new API first
+                duration = librosa.get_duration(path=str(path))
+            except Exception:
+                try:
+                    # Fallback to old API for compatibility
+                    duration = librosa.get_duration(filename=str(path))
+                except Exception:
+                    # Last resort: load a small sample to get duration
+                    y, sr = librosa.load(str(path), sr=None, duration=1.0)
+                    # Estimate total duration from file size and sample rate
+                    file_size = path.stat().st_size
+                    # Rough estimate: assume 16-bit audio
+                    estimated_samples = file_size / 2  # 2 bytes per sample for 16-bit
+                    duration = estimated_samples / sr
             
-            # Try to get more detailed info using soundfile
+            # Try to get more detailed info using multiple methods
+            sample_rate = None
+            channels = None
+            frames = None
+            
+            # Method 1: Try soundfile (works well with many formats)
             try:
                 with sf.SoundFile(str(path)) as f:
                     sample_rate = f.samplerate
                     channels = f.channels
                     frames = f.frames
-            except:
-                # Fallback to librosa
-                y, sample_rate = librosa.load(str(path), sr=None, duration=0.1)
-                channels = 1  # librosa loads as mono by default
-                frames = int(duration * sample_rate)
+            except Exception:
+                pass
+            
+            # Method 2: Fallback to librosa if soundfile failed
+            if sample_rate is None:
+                try:
+                    y, sample_rate = librosa.load(str(path), sr=None, duration=0.1)
+                    channels = 1 if len(y.shape) == 1 else y.shape[0]
+                    frames = int(duration * sample_rate)
+                except Exception:
+                    # Default values if all else fails
+                    sample_rate = 22050  # librosa default
+                    channels = 1
+                    frames = int(duration * sample_rate)
             
             return {
                 'file_path': str(path),
@@ -224,7 +473,28 @@ class AudioLoader:
             }
             
         except Exception as e:
-            raise AudioValidationError(f"Failed to get audio info for {path}: {str(e)}")
+            # Check if this is an M4A compatibility issue
+            if path.suffix.lower() in ['.m4a', '.mp4', '.aac']:
+                raise AudioValidationError(
+                    f"M4A/MP4 audio format compatibility issue with {path.name}.\n\n"
+                    f"🔧 Quick Fix Options:\n"
+                    f"1. Convert to WAV format (recommended):\n"
+                    f"   • Open your M4A file in any audio player\n"
+                    f"   • Export/Save As → WAV format\n"
+                    f"   • Use the WAV file instead\n\n"
+                    f"2. Convert online:\n"
+                    f"   • Visit cloudconvert.com or convertio.co\n"
+                    f"   • Upload your M4A file\n"
+                    f"   • Convert to WAV and download\n\n"
+                    f"3. Use VLC Media Player:\n"
+                    f"   • Media → Convert/Save\n"
+                    f"   • Add your M4A file\n"
+                    f"   • Choose WAV profile → Start\n\n"
+                    f"WAV format provides the best compatibility and will work reliably.\n"
+                    f"Technical details: {str(e)}"
+                )
+            else:
+                raise AudioValidationError(f"Failed to get audio info for {path}: {str(e)}")
     
     def convert_format(self, input_path: str, output_path: str, target_format: str = 'wav') -> str:
         """

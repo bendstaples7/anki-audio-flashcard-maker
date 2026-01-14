@@ -5,6 +5,8 @@ scipy>=1.7.0
 # Audio processing
 librosa>=0.9.0
 webrtcvad>=2.0.10
+openai-whisper>=20231117
+pypinyin>=0.50.0
 
 # Google Docs API
 google-auth>=2.0.0

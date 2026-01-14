@@ -38,6 +38,12 @@ class StageProgress:
     completed_items: int = 0
     details: Dict[str, Any] = field(default_factory=dict)
     
+    # Validation status tracking
+    validation_status: Optional[str] = None  # passed, failed, skipped, in_progress
+    validation_confidence: Optional[float] = None
+    validation_issues_count: int = 0
+    validation_recommendations: List[str] = field(default_factory=list)
+    
     @property
     def duration(self) -> Optional[timedelta]:
         """Get the duration of this stage."""
@@ -257,16 +263,27 @@ class ProgressTracker:
         failed_stages = sum(1 for s in self.stages.values() if s.status == "failed")
         total_stages = len(self.stages)
         
-        # Collect stage details
+        # Collect stage details with validation information
         stage_summaries = {}
         for stage, progress in self.stages.items():
-            stage_summaries[stage.value] = {
+            stage_summary = {
                 'status': progress.status,
                 'duration': progress.duration.total_seconds() if progress.duration else None,
                 'items_processed': progress.completed_items,
                 'total_items': progress.total_items,
                 'details': progress.details
             }
+            
+            # Add validation information if available
+            if progress.validation_status:
+                stage_summary['validation'] = {
+                    'status': progress.validation_status,
+                    'confidence': progress.validation_confidence,
+                    'issues_count': progress.validation_issues_count,
+                    'recommendations': progress.validation_recommendations
+                }
+            
+            stage_summaries[stage.value] = stage_summary
         
         # Calculate totals from summary data
         total_vocab_entries = self.summary_data.get('vocab_entries', 0)
@@ -314,7 +331,7 @@ class ProgressTracker:
         print(f"   🎴 Cards Created: {summary.get('cards_created', 0)}")
         print(f"   🎵 Audio Clips: {summary.get('audio_clips', 0)}")
         
-        # Stage breakdown
+        # Stage breakdown with validation information
         print("\n📋 STAGE BREAKDOWN:")
         for stage_name, details in summary.get('stage_details', {}).items():
             status_icon = "✅" if details['status'] == 'completed' else "❌" if details['status'] == 'failed' else "⏸️"
@@ -328,9 +345,82 @@ class ProgressTracker:
             if details.get('total_items', 0) > 0:
                 items_str = f" - {details['items_processed']}/{details['total_items']} items"
             
-            print(f"   {status_icon} {stage_display}{duration_str}{items_str}")
+            # Add validation status if available
+            validation_str = ""
+            if 'validation' in details:
+                val_info = details['validation']
+                if val_info['status'] == 'passed':
+                    confidence_str = f" {val_info['confidence']:.0%}" if val_info['confidence'] else ""
+                    validation_str = f" 🔍✅{confidence_str}"
+                elif val_info['status'] == 'failed':
+                    validation_str = f" 🔍❌({val_info['issues_count']})"
+                elif val_info['status'] == 'skipped':
+                    validation_str = " 🔍⏭️"
+            
+            print(f"   {status_icon} {stage_display}{duration_str}{items_str}{validation_str}")
         
         print("=" * 50)
+    
+    def update_validation_status(self, stage: ProcessingStage, validation_status: str,
+                               confidence: float = None, issues_count: int = 0,
+                               recommendations: List[str] = None) -> None:
+        """
+        Update validation status for a stage.
+        
+        Args:
+            stage: The processing stage to update
+            validation_status: Status of validation (passed, failed, skipped, in_progress)
+            confidence: Validation confidence score (0.0 to 1.0)
+            issues_count: Number of validation issues found
+            recommendations: List of validation recommendations
+        """
+        stage_progress = self.stages[stage]
+        stage_progress.validation_status = validation_status
+        stage_progress.validation_confidence = confidence
+        stage_progress.validation_issues_count = issues_count
+        stage_progress.validation_recommendations = recommendations or []
+        
+        # Log validation status
+        if validation_status == "passed":
+            confidence_str = f" (confidence: {confidence:.1%})" if confidence is not None else ""
+            self.logger.info(f"✅ Validation passed for {stage.value}{confidence_str}")
+        elif validation_status == "failed":
+            self.logger.warning(f"❌ Validation failed for {stage.value} ({issues_count} issues)")
+        elif validation_status == "skipped":
+            self.logger.debug(f"⏭️ Validation skipped for {stage.value}")
+        
+        # Console output for validation status
+        if self.enable_console_output and validation_status in ["passed", "failed"]:
+            if validation_status == "passed":
+                confidence_str = f" ({confidence:.0%} confidence)" if confidence is not None else ""
+                print(f"   🔍 Validation: ✅ Passed{confidence_str}")
+            else:
+                print(f"   🔍 Validation: ❌ Failed ({issues_count} issues)")
+        
+        # Notify callbacks
+        for callback in self.progress_callbacks:
+            callback(stage_progress)
+    
+    def log_validation_info(self, stage: ProcessingStage, message: str, 
+                          is_warning: bool = False) -> None:
+        """
+        Log validation-specific information.
+        
+        Args:
+            stage: The processing stage this validation info relates to
+            message: The validation message
+            is_warning: Whether this is a warning message
+        """
+        stage_name = stage.value.replace('_', ' ').title()
+        
+        if is_warning:
+            self.logger.warning(f"[{stage_name} Validation] ⚠️ {message}")
+            if self.enable_console_output:
+                print(f"   🔍 Validation Warning: {message}")
+        else:
+            self.logger.info(f"[{stage_name} Validation] {message}")
+            if self.enable_console_output:
+                print(f"   🔍 Validation: {message}")
     
     def update_summary_data(self, **kwargs) -> None:
         """Update summary data with key metrics."""

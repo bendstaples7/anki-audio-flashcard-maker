@@ -101,17 +101,16 @@ def test_authentication_only():
             print("📋 Testing connection...")
             if authenticator.test_connection():
                 print("✅ Connection test successful!")
-                return True
             else:
                 print("❌ Connection test failed")
-                return False
+                assert False, "Connection test failed"
         else:
             print("❌ Authentication failed")
-            return False
+            assert False, "Authentication failed"
             
     except Exception as e:
         print(f"❌ Error: {e}")
-        return False
+        assert False, f"Authentication test failed: {e}"
 
 
 def main():

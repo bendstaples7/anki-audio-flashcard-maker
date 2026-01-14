@@ -78,11 +78,10 @@ def test_card_template():
         assert field_names == expected_fields
         
         print("   ✅ Card template creation successful")
-        return True
         
     except Exception as e:
         print(f"   ❌ Card template test failed: {e}")
-        return False
+        assert False, f"Card template test failed: {e}"
 
 
 def test_card_formatter():
@@ -115,11 +114,10 @@ def test_card_formatter():
         assert '/' not in sanitized and '?' not in sanitized
         
         print("   ✅ Card formatter tests successful")
-        return True
         
     except Exception as e:
         print(f"   ❌ Card formatter test failed: {e}")
-        return False
+        assert False, f"Card formatter test failed: {e}"
 
 
 def test_unique_naming():
@@ -156,11 +154,10 @@ def test_unique_naming():
             assert filename1 != filename2
         
         print("   ✅ Unique naming tests successful")
-        return True
         
     except Exception as e:
         print(f"   ❌ Unique naming test failed: {e}")
-        return False
+        assert False, f"Unique naming test failed: {e}"
 
 
 def test_package_generation():
@@ -221,13 +218,12 @@ def test_package_generation():
             assert info['valid'], "Package info shows invalid package"
         
         print("   ✅ Package generation tests successful")
-        return True
         
     except Exception as e:
         print(f"   ❌ Package generation test failed: {e}")
         import traceback
         traceback.print_exc()
-        return False
+        assert False, f"Package generation test failed: {e}"
 
 
 def main():

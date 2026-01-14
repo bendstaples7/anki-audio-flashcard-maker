@@ -151,6 +151,15 @@ temp/
 data/
 audio_test_results/
 audio_clips_output/
+test_output/
+
+# Project-specific: Debug and development files
+debug_*.py
+live_debug_*.py
+create_test_*.py
+TASK_*_IMPLEMENTATION_SUMMARY.md
+diagnose_*.py
+test_*_offset.py
 
 # Project-specific: Audio files (can be large)
 *.wav
