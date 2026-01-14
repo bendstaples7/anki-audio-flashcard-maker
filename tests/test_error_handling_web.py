@@ -169,9 +169,7 @@ class TestErrorCodes:
         ]
         
         for endpoint, kwargs, expected_code in test_cases:
-            if 'data' in kwargs:
-                response = client.post(endpoint, **kwargs)
-            elif 'json' in kwargs:
+            if kwargs:
                 response = client.post(endpoint, **kwargs)
             else:
                 response = client.get(endpoint)
