@@ -178,8 +178,8 @@ class TestErrorCodes:
             
             data = response.get_json()
             assert 'error_code' in data, f"Missing error_code in {endpoint}"
-            # Some endpoints might return different codes, just verify it exists
             assert isinstance(data['error_code'], str)
+            assert data['error_code'] == expected_code, f"Expected {expected_code} but got {data['error_code']} for {endpoint}"
 
 
 class TestErrorMessages:
