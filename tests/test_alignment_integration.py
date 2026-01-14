@@ -75,7 +75,6 @@ def test_alignment_integration():
     print(f"✓ Refinement report: {report['confidence_improvement']:.3f} confidence improvement")
     
     print("\n🎉 All alignment integration tests passed!")
-    return True
 
 
 if __name__ == "__main__":
