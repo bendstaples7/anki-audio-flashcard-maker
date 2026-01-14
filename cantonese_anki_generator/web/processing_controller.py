@@ -535,6 +535,10 @@ class ProcessingController:
             
             logger.info(f"Created {len(segments)} audio segments for {num_terms} terms")
             
+            # Validate that we got segments
+            if not segments:
+                raise ValueError(f"Failed to create audio segments for {num_terms} terms. Audio may be too short or silent.")
+            
             # Log segment durations for debugging
             for i, seg in enumerate(segments):
                 duration = seg.end_time - seg.start_time
