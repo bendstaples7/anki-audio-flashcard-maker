@@ -139,7 +139,7 @@ class AnkiPackageGenerator:
                 english=vocab.english,
                 cantonese=vocab.cantonese,
                 audio_filename=audio_filename,
-                tags=['cantonese', 'vocabulary', f'confidence_{int(aligned_pair.alignment_confidence * 100)}']
+                tags=[]
             )
             
             # Create the note
