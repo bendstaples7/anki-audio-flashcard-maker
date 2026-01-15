@@ -235,10 +235,6 @@ section h2 {
     cursor: not-allowed;
 }
 
-.btn-icon {
-    font-size: 1.2em;
-}
-
 .btn-primary {
     background-color: #3498db;
     color: white;
@@ -1037,13 +1033,6 @@ section h2 {
 }
 
 /* Responsive Design */
-@media (max-width: 1200px) {
-    .table-header,
-    .term-row {
-        grid-template-columns: 180px 1fr 160px 100px;
-    }
-}
-
 @media (max-width: 992px) {
     #app {
         padding: 15px;

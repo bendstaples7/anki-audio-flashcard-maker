@@ -38,7 +38,7 @@ def handle_file_too_large(e):
     logger.warning(f"File upload size limit exceeded: {e}")
     return jsonify({
         'success': False,
-        'error': 'File too large. Maximum upload size is 50MB. Please compress your audio file and try again.',
+        'error': 'File too large. Maximum upload size is 500MB. Please compress your audio file and try again.',
         'error_code': 'FILE_TOO_LARGE'
     }), 413
 
@@ -310,7 +310,7 @@ def get_session(session_id: str):
         # Get session manager from app context
         session_manager = current_app.config.get('SESSION_MANAGER')
         if not session_manager:
-            session_manager = SessionManager()
+            session_manager = SessionManager(storage_dir=current_app.config.get('SESSION_FOLDER'))
         
         # Retrieve session
         try:
@@ -400,7 +400,7 @@ def update_session(session_id: str):
         # Get session manager from app context
         session_manager = current_app.config.get('SESSION_MANAGER')
         if not session_manager:
-            session_manager = SessionManager()
+            session_manager = SessionManager(storage_dir=current_app.config.get('SESSION_FOLDER'))
         
         # Parse request data
         data = request.get_json()
@@ -517,7 +517,7 @@ def update_session(session_id: str):
         except Exception as e:
             # Log error but don't fail the request
             # The boundary update was successful, audio regeneration is secondary
-            print(f"Warning: Failed to regenerate audio segment: {e}")
+            logger.warning(f"Failed to regenerate audio segment: {e}")
         
         # Get updated session
         updated_session = session_manager.get_session(session_id)
@@ -569,7 +569,7 @@ def get_audio_segment(session_id: str, term_id: str):
         # Get session manager from app context
         session_manager = current_app.config.get('SESSION_MANAGER')
         if not session_manager:
-            session_manager = SessionManager()
+            session_manager = SessionManager(storage_dir=current_app.config.get('SESSION_FOLDER'))
         
         # Verify session exists
         session = session_manager.get_session(session_id)
@@ -631,10 +631,10 @@ def get_audio_segment(session_id: str, term_id: str):
         logger.info(f"File exists: {os.path.exists(segment_path)}")
         
         if not os.path.exists(segment_path):
-            logger.error(f"Audio segment file not found: {segment_path}")
+            logger.error(f"Audio segment file not found for term {term_id}: {segment_path}")
             return jsonify({
                 'success': False,
-                'error': f'Audio segment not found: {term_id}. Path: {segment_path}'
+                'error': f'Audio segment not found for term: {term_id}'
             }), 404
         
         # Serve the audio file
@@ -723,7 +723,7 @@ def process_files():
         # Get or create processing controller
         session_manager = current_app.config.get('SESSION_MANAGER')
         if not session_manager:
-            session_manager = SessionManager()
+            session_manager = SessionManager(storage_dir=current_app.config.get('SESSION_FOLDER'))
             current_app.config['SESSION_MANAGER'] = session_manager
         
         audio_extractor = current_app.config.get('AUDIO_EXTRACTOR')
@@ -814,7 +814,7 @@ def save_session(session_id: str):
         # Get session manager from app context
         session_manager = current_app.config.get('SESSION_MANAGER')
         if not session_manager:
-            session_manager = SessionManager()
+            session_manager = SessionManager(storage_dir=current_app.config.get('SESSION_FOLDER'))
         
         # Verify session exists
         session = session_manager.get_session(session_id)
@@ -864,7 +864,7 @@ def reset_term(session_id: str, term_id: str):
         # Get session manager from app context
         session_manager = current_app.config.get('SESSION_MANAGER')
         if not session_manager:
-            session_manager = SessionManager()
+            session_manager = SessionManager(storage_dir=current_app.config.get('SESSION_FOLDER'))
         
         # Verify session exists
         session = session_manager.get_session(session_id)
@@ -926,7 +926,7 @@ def reset_term(session_id: str, term_id: str):
                 )
         except Exception as e:
             # Log error but don't fail the request
-            print(f"Warning: Failed to regenerate audio segment: {e}")
+            logger.warning(f"Failed to regenerate audio segment: {e}")
         
         return jsonify({
             'success': True,
@@ -965,7 +965,7 @@ def reset_all_terms(session_id: str):
         # Get session manager from app context
         session_manager = current_app.config.get('SESSION_MANAGER')
         if not session_manager:
-            session_manager = SessionManager()
+            session_manager = SessionManager(storage_dir=current_app.config.get('SESSION_FOLDER'))
         
         # Verify session exists
         session = session_manager.get_session(session_id)
@@ -1007,7 +1007,7 @@ def reset_all_terms(session_id: str):
                 )
         except Exception as e:
             # Log error but don't fail the request
-            print(f"Warning: Failed to regenerate audio segments: {e}")
+            logger.warning(f"Failed to regenerate audio segments: {e}")
         
         return jsonify({
             'success': True,
@@ -1049,7 +1049,7 @@ def regenerate_term(session_id: str, term_id: str):
         # Get session manager and processing controller
         session_manager = current_app.config.get('SESSION_MANAGER')
         if not session_manager:
-            session_manager = SessionManager()
+            session_manager = SessionManager(storage_dir=current_app.config.get('SESSION_FOLDER'))
         
         processing_controller = current_app.config.get('PROCESSING_CONTROLLER')
         if not processing_controller:
@@ -1158,7 +1158,7 @@ def regenerate_from_term(session_id: str, term_id: str):
         # Get session manager and processing controller
         session_manager = current_app.config.get('SESSION_MANAGER')
         if not session_manager:
-            session_manager = SessionManager()
+            session_manager = SessionManager(storage_dir=current_app.config.get('SESSION_FOLDER'))
         
         processing_controller = current_app.config.get('PROCESSING_CONTROLLER')
         if not processing_controller:
@@ -1324,7 +1324,7 @@ def generate_anki_package(session_id: str):
         # Get session manager from app context
         session_manager = current_app.config.get('SESSION_MANAGER')
         if not session_manager:
-            session_manager = SessionManager()
+            session_manager = SessionManager(storage_dir=current_app.config.get('SESSION_FOLDER'))
         
         # Verify session exists
         session = session_manager.get_session(session_id)
@@ -1523,8 +1523,8 @@ def generate_anki_package(session_id: str):
             if session:
                 session.status = 'ready'
                 session_manager._save_session(session)
-        except:
-            pass
+        except Exception as e:
+            logger.error(f"Failed to reset session status for session {session_id}: {str(e)}")
         
         return jsonify({
             'success': False,

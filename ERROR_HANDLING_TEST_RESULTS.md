@@ -85,7 +85,7 @@ Use the `TESTING_ERROR_HANDLING.md` guide to perform these tests:
 - [ ] Error toast display and auto-hide
 
 ### Backend Tests
-- [ ] File size limit (50MB) enforcement
+- [ ] File size limit (500MB) enforcement
 - [ ] Google Docs URL validation
 - [ ] Missing file detection
 - [ ] Session not found handling
@@ -118,7 +118,7 @@ pytest tests/test_error_handling_web.py -v --tb=long
 # Start the web server
 python cantonese_anki_generator/web/run.py
 
-# Open browser to http://localhost:5000
+# Open browser to http://localhost:3000
 # Follow scenarios in TESTING_ERROR_HANDLING.md
 ```
 
@@ -149,7 +149,7 @@ python cantonese_anki_generator/web/run.py
 
 | Code | HTTP | Description |
 |------|------|-------------|
-| `FILE_TOO_LARGE` | 413 | Upload exceeds 50MB limit |
+| `FILE_TOO_LARGE` | 413 | Upload exceeds 500MB limit |
 | `INVALID_URL` | 400 | Google Docs/Sheets URL invalid |
 | `MISSING_AUDIO` | 400 | No audio file in request |
 | `INVALID_AUDIO` | 400 | Unsupported audio format |

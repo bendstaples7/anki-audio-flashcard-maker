@@ -85,7 +85,7 @@ class AlignmentSession:
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
-        return {
+        return convert_numpy_types({
             'session_id': self.session_id,
             'doc_url': self.doc_url,
             'audio_file_path': self.audio_file_path,
@@ -95,7 +95,7 @@ class AlignmentSession:
             'status': self.status,
             'last_modified': self.last_modified.isoformat(),
             'updates': [update.to_dict() for update in self.updates]
-        }
+        })
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'AlignmentSession':

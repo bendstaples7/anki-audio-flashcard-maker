@@ -318,10 +318,16 @@ class ProcessingController:
         Returns:
             Session ID of the created session
         """
-        # Generate session ID
-        session_id = generate_session_id()
+        # First create the session to get the definitive session ID
+        # We'll create it with empty terms initially, then update with correct URLs
+        session_id = self.session_manager.create_session(
+            doc_url=doc_url,
+            audio_file_path=audio_file_path,
+            terms=[],
+            audio_duration=audio_duration
+        )
         
-        # Convert aligned pairs to term alignments
+        # Now build term alignments with the correct session_id in URLs
         terms = []
         for i, pair in enumerate(aligned_pairs):
             term_id = generate_term_id(i, pair.vocabulary_entry.english)
@@ -340,15 +346,13 @@ class ProcessingController:
             )
             terms.append(term_alignment)
         
-        # Create alignment session
-        created_session_id = self.session_manager.create_session(
-            doc_url=doc_url,
-            audio_file_path=audio_file_path,
-            terms=terms,
-            audio_duration=audio_duration
-        )
+        # Update the session with the correct terms
+        session = self.session_manager.get_session(session_id)
+        if session:
+            session.terms = terms
+            self.session_manager._save_session(session)
         
-        return created_session_id
+        return session_id
 
     def regenerate_term_alignment(
         self, session_id: str, term_id: str, audio_data: np.ndarray, sample_rate: int

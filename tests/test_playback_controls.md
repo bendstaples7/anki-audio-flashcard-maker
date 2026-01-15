@@ -11,7 +11,7 @@ This document describes how to manually test the audio playback controls impleme
    python -m cantonese_anki_generator.web.run
    ```
 
-2. Open a web browser and navigate to `http://localhost:5000`
+2. Open a web browser and navigate to `http://localhost:3000`
 
 ## Test Cases
 

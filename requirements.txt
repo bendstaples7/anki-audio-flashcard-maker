@@ -18,8 +18,8 @@ google-api-python-client>=2.0.0
 genanki>=0.13.0
 
 # Web interface
-flask>=2.3.0
-flask-cors>=4.0.0
+flask>=3.1.2
+flask-cors>=6.0.2
 
 # Forced alignment
 montreal-forced-alignment>=2.0.0

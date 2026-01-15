@@ -31,21 +31,23 @@ python -m cantonese_anki_generator.web.run
 python cantonese_anki_generator/web/run.py
 ```
 
-The application will be available at: http://localhost:5000
+The application will be available at: http://localhost:3000
 
 ## API Endpoints
 
 ### Health Check
 - **GET** `/api/health` - Check API status
 
-### File Upload (Coming in Task 2)
-- **POST** `/api/upload` - Upload audio file and vocabulary document
+### File Upload
+- **POST** `/api/upload` - Upload audio file and vocabulary document (Implemented - tested)
 
-### Session Management (Coming in Task 3-5)
-- **GET** `/api/session/<session_id>` - Retrieve session data
-- **POST** `/api/session/<session_id>/update` - Update alignment boundaries
-- **POST** `/api/session/<session_id>/generate` - Generate Anki package
-- **GET** `/api/audio/<session_id>/<term_id>` - Serve audio segment
+### Session Management
+- **GET** `/api/session/<session_id>` - Retrieve session data (Implemented - tested)
+- **POST** `/api/session/<session_id>/update` - Update alignment boundaries (Implemented - tested)
+- **POST** `/api/session/<session_id>/generate` - Generate Anki package (Implemented - tested)
+- **GET** `/api/audio/<session_id>/<term_id>` - Serve audio segment (Implemented - tested)
+
+**Note**: Core API endpoints completed and tested. See [CHECKPOINT_11_SUMMARY.md](../../CHECKPOINT_11_SUMMARY.md) for implementation details.
 
 ## Configuration
 
@@ -60,5 +62,5 @@ The Flask app is configured with:
 The application uses:
 - **Flask** for the web framework
 - **Flask-CORS** for cross-origin resource sharing
-- **WaveSurfer.js** (to be added) for waveform visualization
+- **WaveSurfer.js** - Implemented: waveform rendering, zoom/pan controls, and library setup complete (see [CHECKPOINT_11_SUMMARY.md](../../CHECKPOINT_11_SUMMARY.md) Task 8)
 - **Web Audio API** for audio playback

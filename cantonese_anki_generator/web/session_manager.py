@@ -4,6 +4,7 @@ Session management for manual audio alignment.
 
 import os
 import json
+import re
 from typing import Dict, Optional, List
 from datetime import datetime
 from pathlib import Path
@@ -21,14 +22,17 @@ class SessionManager:
     Manages alignment sessions including creation, retrieval, updates, and cleanup.
     """
 
-    def __init__(self, storage_dir: str = "temp/sessions"):
+    def __init__(self, storage_dir: str = None):
         """
         Initialize the SessionManager.
         
         Args:
-            storage_dir: Directory path for storing session data
+            storage_dir: Directory path for storing session data. If None, defaults to temp/sessions
+                        relative to current working directory. Path will be resolved to absolute.
         """
-        self.storage_dir = Path(storage_dir)
+        if storage_dir is None:
+            storage_dir = os.path.join(os.getcwd(), 'temp', 'sessions')
+        self.storage_dir = Path(storage_dir).resolve()
         self.storage_dir.mkdir(parents=True, exist_ok=True)
         
         # In-memory cache for active sessions
@@ -272,8 +276,43 @@ class SessionManager:
         session_files = self.storage_dir.glob("session_*.json")
         return [f.stem.replace("session_", "") for f in session_files]
 
+    def _validate_session_id(self, session_id: str) -> None:
+        """
+        Validate session ID to prevent path traversal attacks.
+        
+        Session IDs should be UUIDs in the format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+        Only alphanumeric characters and hyphens are allowed.
+        
+        Args:
+            session_id: The session identifier to validate
+            
+        Raises:
+            ValueError: If session_id contains invalid characters
+        """
+        if not session_id:
+            raise ValueError("Session ID cannot be empty")
+        
+        # UUID format: 8-4-4-4-12 hexadecimal characters separated by hyphens
+        uuid_pattern = re.compile(r'^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$')
+        
+        if not uuid_pattern.match(session_id):
+            raise ValueError(f"Invalid session ID format: {session_id}. Must be a valid UUID.")
+
     def _get_session_file_path(self, session_id: str) -> Path:
-        """Get the file path for a session."""
+        """
+        Get the file path for a session.
+        
+        Args:
+            session_id: The session identifier
+            
+        Returns:
+            Path to the session file
+            
+        Raises:
+            ValueError: If session_id is invalid
+        """
+        # Validate session_id to prevent path traversal
+        self._validate_session_id(session_id)
         return self.storage_dir / f"session_{session_id}.json"
 
     def _save_session(self, session: AlignmentSession) -> None:

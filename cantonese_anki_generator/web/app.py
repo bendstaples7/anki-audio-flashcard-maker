@@ -56,5 +56,21 @@ def register_routes(app):
 
 
 if __name__ == '__main__':
+    import os
+    
+    # Security: Use environment variables to control debug mode and host binding
+    # Never run with debug=True and host='0.0.0.0' in production
+    debug_mode = os.environ.get('FLASK_DEBUG', 'True').lower() == 'true'
+    host = '127.0.0.1' if debug_mode else '0.0.0.0'
+    port = int(os.environ.get('FLASK_PORT', '3000'))
+    
     app = create_app()
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    
+    if debug_mode:
+        print("⚠️  WARNING: Running in DEBUG mode - server restricted to localhost")
+        print(f"Server: http://localhost:{port}")
+    else:
+        print(f"Server: http://0.0.0.0:{port}")
+    
+    app.run(debug=debug_mode, host=host, port=port)
+

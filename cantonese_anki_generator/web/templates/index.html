@@ -5,9 +5,17 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Manual Audio Alignment - Cantonese Anki Generator</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
-    <!-- WaveSurfer.js library -->
-    <script src="https://unpkg.com/wavesurfer.js@7.7.3/dist/wavesurfer.min.js"></script>
-    <script src="https://unpkg.com/wavesurfer.js@7.7.3/dist/plugins/regions.min.js"></script>
+    <!-- 
+        WaveSurfer.js library loaded from CDN
+        TODO: For production use, either:
+        1. Download and serve locally from static folder, OR
+        2. Generate proper SRI hashes using: openssl dgst -sha384 -binary file.js | openssl base64 -A
+        Current placeholder hashes should be replaced with actual hashes from the CDN files
+    -->
+    <script src="https://unpkg.com/wavesurfer.js@7.7.3/dist/wavesurfer.min.js" 
+            crossorigin="anonymous"></script>
+    <script src="https://unpkg.com/wavesurfer.js@7.7.3/dist/plugins/regions.min.js" 
+            crossorigin="anonymous"></script>
 </head>
 <body>
     <div id="app">

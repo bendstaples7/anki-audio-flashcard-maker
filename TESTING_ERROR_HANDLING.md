@@ -23,7 +23,7 @@ This tests:
 python cantonese_anki_generator/web/run.py
 ```
 
-Then open: `http://localhost:5000`
+Then open: `http://localhost:3000`
 
 ---
 
@@ -48,12 +48,12 @@ Then open: `http://localhost:5000`
 7. **Expected**: Upload succeeds
 
 ### ✅ Test 4: Session Not Found
-1. In browser, go to: `http://localhost:5000?session=invalid_id_123`
+1. In browser, go to: `http://localhost:3000?session=invalid_id_123`
 2. **Expected**: Error: "Session not found..."
 3. **Expected**: Retry button appears
 
 ### ✅ Test 5: Large File
-1. Try to upload a file > 50MB
+1. Try to upload a file > 500MB
 2. **Expected**: Error about file size limit
 
 ---
@@ -103,7 +103,7 @@ INFO     cantonese_anki_generator.web.api:api.py:750 Processing complete: sessio
 
 ### Test Automatic Retry
 1. Start server
-2. Open browser to `http://localhost:5000`
+2. Open browser to `http://localhost:3000`
 3. Open DevTools Console
 4. Upload a file with network throttling enabled
 5. Watch console for retry messages:
@@ -129,7 +129,7 @@ INFO     cantonese_anki_generator.web.api:api.py:750 Processing complete: sessio
 - ❌ "Failed to connect to server. Please check your connection."
 - ❌ "Invalid URL format. Please provide a valid Google Docs or Sheets URL"
 - ❌ "Unsupported format. Please select an MP3, WAV, or M4A file."
-- ❌ "File too large (X MB). Maximum size is 50MB."
+- ❌ "File too large (X MB). Maximum size is 500MB."
 
 ### Backend Errors
 - ❌ "Document not found. Please check the URL and ensure the document exists."
@@ -146,7 +146,7 @@ All errors include an `error_code` field for programmatic handling:
 
 | Code | Meaning | HTTP Status |
 |------|---------|-------------|
-| `FILE_TOO_LARGE` | Upload exceeds 50MB | 413 |
+| `FILE_TOO_LARGE` | Upload exceeds 500MB | 413 |
 | `INVALID_URL` | URL format invalid | 400 |
 | `MISSING_AUDIO` | No audio file provided | 400 |
 | `INVALID_AUDIO` | Bad audio format/size | 400 |
@@ -168,9 +168,9 @@ All errors include an `error_code` field for programmatic handling:
 Some tests may fail if Google credentials aren't configured. This is expected in test environments. The error handling still works correctly - it returns appropriate error messages.
 
 ### Server Won't Start
-- Check if port 5000 is already in use
+- Check if port 3000 is already in use
 - Try: `python cantonese_anki_generator/web/run.py`
-- Or specify different port in `run.py`
+- Or specify different port via `FLASK_PORT` environment variable
 
 ### Can't See Retry Buttons
 - Make sure you're using a modern browser (Chrome, Firefox, Edge)

@@ -15,7 +15,7 @@ Implemented comprehensive error handling and user feedback for the Manual Audio 
 ### Network Error Handling
 - **New `fetchWithRetry()` wrapper function**
   - Automatic retry with exponential backoff (up to 2 retries)
-  - 30-second timeout to prevent hanging requests
+  - 5-minute timeout for long-running operations (e.g., regeneration with Whisper)
   - Intelligent retry logic (only retries on 5xx errors and network issues)
   - Specific error messages for different failure types:
     - Timeout errors
@@ -41,7 +41,7 @@ Updated all major API calls to use retry logic:
 ### Global Error Handlers
 - **`RequestEntityTooLarge` handler** - Catches file size limit errors
   - Returns 413 status code
-  - Provides clear message about 50MB limit
+  - Provides clear message about 500MB limit
   - Suggests file compression
 
 - **General exception handler** - Catches unexpected errors
@@ -129,7 +129,7 @@ Implemented consistent error codes across all endpoints:
 5. Test retry button functionality (should re-execute failed operation)
 
 ### Backend Testing
-1. Test file size limits (upload >50MB file)
+1. Test file size limits (upload >500MB file)
 2. Test invalid URLs (malformed, inaccessible)
 3. Test missing files (delete file before processing)
 4. Test invalid session IDs

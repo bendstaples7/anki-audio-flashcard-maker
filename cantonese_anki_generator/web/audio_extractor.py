@@ -133,11 +133,23 @@ class AudioExtractor:
             audio_data: Audio data to save
             sample_rate: Audio sample rate
             filepath: Output file path
+            
+        Raises:
+            ValueError: If audio_data is empty
         """
+        # Check for empty audio data
+        if len(audio_data) == 0:
+            raise ValueError("Cannot save empty audio segment")
+        
         # Normalize and convert to 16-bit PCM
         if audio_data.dtype != np.int16:
             # Normalize to [-1, 1] range
-            audio_normalized = audio_data / np.max(np.abs(audio_data) + 1e-8)
+            max_val = np.max(np.abs(audio_data))
+            if max_val > 0:
+                audio_normalized = audio_data / max_val
+            else:
+                # Handle silent audio (all zeros)
+                audio_normalized = audio_data
             # Convert to 16-bit PCM
             audio_int16 = (audio_normalized * 32767).astype(np.int16)
         else:

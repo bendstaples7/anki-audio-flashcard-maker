@@ -275,10 +275,14 @@ Task 4: Audio Extraction
             │
             └─→ Served by API for playback
 
-Task 10: Boundary Adjustment (Future)
+Task 10: Interactive Boundary Adjustment
     │
-    └─→ Will use playback to verify adjustments
+    └─→ **Completed**: Interactive Boundary Adjustment implemented
             │
+            ├─→ Draggable boundary markers
+            ├─→ Real-time waveform updates
+            ├─→ Backend synchronization
+            ├─→ Playback used to verify adjustments
             └─→ Play adjusted segments immediately
 ```
 
