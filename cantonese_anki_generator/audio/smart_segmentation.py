@@ -37,8 +37,8 @@ class SmartBoundaryDetector:
         self.window_size = int(0.015 * sample_rate)  # 15ms windows - smaller for precision
         self.hop_size = int(0.005 * sample_rate)     # 5ms hop - finer resolution
         self.padding = 0.02  # 20ms padding - reduced to prevent overlap
-        self.min_segment_duration = 0.3  # Minimum segment duration (300ms)
-        self.max_segment_duration = 3.0  # Maximum segment duration (3s)
+        self.min_segment_duration = 1.0  # Minimum segment duration (1.0s) - single words need at least 1s
+        self.max_segment_duration = 8.0  # Maximum segment duration (8s) - allow longer phrases
     
     def find_silence_gaps(self, audio_data: np.ndarray) -> List[Tuple[float, float]]:
         """
@@ -176,37 +176,53 @@ class SmartBoundaryDetector:
         original_start_offset = start_offset
         if start_offset == 0.0 and not force_start_offset:
             try:
-                # Check first 2 seconds for silence
-                check_duration = min(2.0, len(audio_data) / self.sample_rate / 4)  # Check up to 2s or 25% of audio
+                # ENHANCED: More aggressive silence detection at the beginning
+                # Check first 3 seconds or 30% of audio (whichever is smaller)
+                check_duration = min(3.0, len(audio_data) / self.sample_rate * 0.3)
                 check_samples = int(check_duration * self.sample_rate)
                 
                 if check_samples > 0 and check_samples < len(audio_data):
-                    beginning_audio = audio_data[:check_samples]
-                    beginning_rms = np.sqrt(np.mean(beginning_audio ** 2))
-                    
-                    # If beginning is very quiet compared to overall audio, skip it
+                    # Calculate overall audio RMS for comparison
                     overall_rms = np.sqrt(np.mean(audio_data ** 2))
-                    if beginning_rms < overall_rms * 0.1 and beginning_rms < 0.005:
-                        # Find where audio actually starts
-                        window_size = int(0.1 * self.sample_rate)  # 100ms windows
-                        if window_size > 0:
-                            for i in range(0, len(audio_data) - window_size, max(1, window_size // 2)):
-                                if i + window_size < len(audio_data):
-                                    window = audio_data[i:i + window_size]
-                                    window_rms = np.sqrt(np.mean(window ** 2))
-                                    if window_rms > overall_rms * 0.2:  # Found actual content
-                                        detected_start = i / self.sample_rate
-                                        logger.info(f"Auto-detected silence at beginning, starting from {detected_start:.2f}s")
-                                        start_offset = detected_start
-                                        break
+                    
+                    # Use smaller windows for more precise detection
+                    window_size = int(0.05 * self.sample_rate)  # 50ms windows (was 100ms)
+                    hop_size = int(0.02 * self.sample_rate)     # 20ms hop (was 50ms)
+                    
+                    if window_size > 0 and hop_size > 0:
+                        # Scan from the beginning to find where speech actually starts
+                        speech_threshold = max(0.01, overall_rms * 0.15)  # More lenient threshold
+                        
+                        for i in range(0, check_samples - window_size, hop_size):
+                            window = audio_data[i:i + window_size]
+                            window_rms = np.sqrt(np.mean(window ** 2))
+                            
+                            # Found speech when RMS exceeds threshold
+                            if window_rms > speech_threshold:
+                                detected_start = i / self.sample_rate
+                                
+                                # Only skip if we detected significant silence (at least 0.2s)
+                                if detected_start >= 0.2:
+                                    logger.info(f"🔍 Auto-detected {detected_start:.2f}s of silence at beginning")
+                                    logger.info(f"   Speech threshold: {speech_threshold:.4f}, Overall RMS: {overall_rms:.4f}")
+                                    start_offset = detected_start
+                                else:
+                                    logger.debug(f"Detected speech at {detected_start:.2f}s (too early to skip)")
+                                break
+                        
+                        # If we scanned the entire check region without finding speech, something is wrong
+                        if start_offset == 0.0:
+                            logger.warning(f"No speech detected in first {check_duration:.2f}s - audio may be very quiet or silent")
+                            
             except Exception as e:
                 logger.warning(f"Auto-detection of silence failed, using original offset: {e}")
                 start_offset = original_start_offset
         
         if start_offset != original_start_offset:
-            logger.info(f"Adjusted start offset from {original_start_offset:.2f}s to {start_offset:.2f}s")
+            logger.info(f"✂️  Skipping {start_offset:.2f}s of initial silence")
+            logger.info(f"   Starting segmentation from {start_offset:.2f}s")
         else:
-            logger.info(f"Using start offset: {start_offset:.2f}s")
+            logger.info(f"✂️  No initial silence detected, starting from {start_offset:.2f}s")
         
         # Find silence gaps
         silence_gaps = self.find_silence_gaps(audio_data)
@@ -276,7 +292,13 @@ class SmartBoundaryDetector:
             logger.debug(f"Segment {i+1}: {padded_start:.3f}s - {padded_end:.3f}s "
                         f"(duration: {segment_duration:.3f}s, confidence: {confidence:.2f})")
         
-        logger.info(f"Generated {len(segments)} precise, non-overlapping audio segments")
+        # Log summary of segments
+        logger.info(f"✂️  Segmentation complete:")
+        logger.info(f"   Created {len(segments)} segments from {start_offset:.2f}s to {total_duration:.2f}s")
+        if segments:
+            durations = [s.end_time - s.start_time for s in segments]
+            logger.info(f"   Segment durations: min={min(durations):.2f}s, max={max(durations):.2f}s, avg={sum(durations)/len(durations):.2f}s")
+        
         return segments
     
     def refine_boundaries_with_speech_feedback(self, segments: List[AudioSegment], 

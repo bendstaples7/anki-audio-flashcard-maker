@@ -65,8 +65,8 @@ class ProcessingController:
         """
         Process uploaded files and create an alignment session.
         
-        Runs the automatic alignment pipeline and creates an initial
-        alignment session with all term alignments.
+        Runs the automatic alignment pipeline WITH SPEECH VERIFICATION and creates
+        an initial alignment session with all term alignments verified and adjusted.
         
         Args:
             doc_url: URL of Google Docs/Sheets with vocabulary
@@ -78,47 +78,68 @@ class ProcessingController:
         Raises:
             Exception: If processing fails at any stage
         """
-        logger.info(f"Processing upload: doc_url={doc_url}, audio={audio_file_path}")
+        logger.info("="*60)
+        logger.info("PROCESSING UPLOAD")
+        logger.info("="*60)
         
-        # Stage 1: Extract vocabulary from document
-        logger.info("Extracting vocabulary from document...")
+        # Stage 1: Extract vocabulary
+        logger.info("📄 Extracting vocabulary from spreadsheet...")
         vocab_entries = self._extract_vocabulary(doc_url)
-        logger.info(f"Extracted {len(vocab_entries)} vocabulary entries")
+        logger.info(f"✓ Found {len(vocab_entries)} terms:")
+        for i, entry in enumerate(vocab_entries, 1):
+            logger.info(f"   {i}. {entry.english} → {entry.cantonese}")
         
-        # Stage 2: Load and process audio
-        logger.info("Loading audio file...")
+        # Stage 2: Load audio
+        logger.info("")
+        logger.info("🎵 Loading audio file...")
         audio_data, sample_rate = self._load_audio(audio_file_path)
         audio_duration = len(audio_data) / sample_rate
-        logger.info(f"Loaded audio: {audio_duration:.2f}s at {sample_rate}Hz")
+        logger.info(f"✓ Audio: {audio_duration:.1f} seconds")
         
-        # Stage 3: Run automatic alignment
-        logger.info("Running automatic alignment...")
+        # Stage 3: Segment audio
+        logger.info("")
+        logger.info(f"✂️  Segmenting audio into {len(vocab_entries)} parts...")
         segments = self._segment_audio(audio_data, len(vocab_entries))
-        logger.info(f"Created {len(segments)} audio segments")
+        logger.info(f"✓ Created {len(segments)} segments")
         
-        # Stage 4: Create aligned pairs
-        logger.info("Creating aligned pairs...")
+        # Stage 4: Pair terms with segments
+        logger.info("")
+        logger.info("🔗 Pairing terms with audio...")
         aligned_pairs = self._create_aligned_pairs(vocab_entries, segments)
-        logger.info(f"Created {len(aligned_pairs)} aligned pairs")
         
-        # Stage 5: Calculate confidence scores
-        logger.info("Calculating confidence scores...")
+        # Stage 5: Calculate confidence
+        logger.info("")
+        logger.info("📊 Calculating confidence scores...")
         self._calculate_confidence_scores(aligned_pairs, audio_data, sample_rate)
         
-        # Stage 6: Create alignment session
-        logger.info("Creating alignment session...")
+        # Stage 6: VERIFY WITH WHISPER (before creating session)
+        logger.info("")
+        logger.info("="*60)
+        logger.info("🎤 VERIFYING WITH SPEECH RECOGNITION")
+        logger.info("="*60)
+        aligned_pairs = self._verify_and_adjust_alignments(
+            aligned_pairs, audio_data, sample_rate
+        )
+        
+        # Stage 7: Create session with verified alignments
+        logger.info("")
+        logger.info("💾 Creating session with verified alignments...")
         session_id = self._create_alignment_session(
             doc_url, audio_file_path, aligned_pairs, audio_duration
         )
-        logger.info(f"Created alignment session: {session_id}")
         
-        # Stage 7: Extract audio segments for frontend playback
-        logger.info("Extracting audio segments...")
+        # Stage 8: Extract audio files with verified boundaries
+        logger.info("")
+        logger.info("🎧 Extracting audio clips...")
         session = self.session_manager.get_session(session_id)
         segment_paths = self.audio_extractor.extract_session_audio_segments(
             session, audio_data, sample_rate
         )
-        logger.info(f"Extracted {len(segment_paths)} audio segments")
+        
+        logger.info("")
+        logger.info("="*60)
+        logger.info("✅ COMPLETE - Ready to review")
+        logger.info("="*60)
         
         return session_id
     
@@ -231,6 +252,218 @@ class ProcessingController:
             aligned_pairs.append(aligned_pair)
         
         return aligned_pairs
+    
+    def _verify_and_adjust_alignments(
+        self, aligned_pairs: List[AlignedPair], audio_data: np.ndarray, sample_rate: int
+    ) -> List[AlignedPair]:
+        """
+        Verify each alignment with Whisper and adjust if mismatch detected.
+        
+        For each term:
+        1. Transcribe the audio segment with Whisper
+        2. Compare transcription with expected Cantonese
+        3. If mismatch, search nearby audio for better match
+        4. Update segment boundaries to correct audio
+        
+        Args:
+            aligned_pairs: Initial aligned pairs from silence detection
+            audio_data: Full audio data array
+            sample_rate: Audio sample rate
+            
+        Returns:
+            Updated aligned pairs with verified and adjusted boundaries
+        """
+        if not self.speech_verifier:
+            logger.warning("⚠️  Speech verifier not available - skipping verification")
+            logger.warning("   Alignments will be based on silence detection only")
+            return aligned_pairs
+        
+        logger.info(f"Verifying {len(aligned_pairs)} terms with Whisper speech recognition...")
+        logger.info("")
+        
+        verified_pairs = []
+        matches = 0
+        adjustments = 0
+        failures = 0
+        
+        # Track the last confirmed position for sequential search
+        last_confirmed_end = 0.0
+        last_confidence = 0.0
+        
+        for i, pair in enumerate(aligned_pairs, 1):
+            expected_cantonese = pair.vocabulary_entry.cantonese
+            expected_english = pair.vocabulary_entry.english
+            segment = pair.audio_segment
+            
+            logger.info(f"Term {i}/{len(aligned_pairs)}: '{expected_english}' → '{expected_cantonese}'")
+            logger.info(f"  Initial segment: {segment.start_time:.2f}s - {segment.end_time:.2f}s")
+            
+            # Step 1: Transcribe current segment
+            try:
+                transcription = self.speech_verifier.transcribe_audio_segment(
+                    segment.audio_data, sample_rate
+                )
+                transcribed_text = transcription['text']
+                whisper_confidence = transcription['confidence']
+                
+                logger.info(f"  Transcribed: '{transcribed_text}' (confidence: {whisper_confidence:.2f})")
+                
+                # Step 2: Compare with expected
+                comparison = self.speech_verifier.compare_transcription_with_expected(
+                    transcribed_text, expected_cantonese
+                )
+                
+                is_match = comparison['is_match']
+                similarity = comparison['similarity']
+                
+                # Step 3: If mismatch OR low confidence, search for correct audio
+                if not is_match or similarity < 0.7 or whisper_confidence < 0.5:
+                    logger.info(f"  ⚠️  MISMATCH (similarity: {similarity:.2f}, whisper: {whisper_confidence:.2f}) - searching for correct audio...")
+                    
+                    # SEQUENTIAL CONSTRAINED SEARCH
+                    # Use information from previous terms to constrain search
+                    if i == 1:
+                        # First term: search from beginning
+                        search_start = 0.0
+                        search_window = 8.0  # 8 seconds for first term
+                    elif last_confidence > 0.75:
+                        # Previous term had high confidence - search narrowly from its end
+                        search_start = max(0, last_confirmed_end - 1.0)  # Small overlap
+                        search_window = 5.0  # Narrow 5-second window
+                    else:
+                        # Previous term had low confidence - search more broadly
+                        search_start = max(0, last_confirmed_end - 2.0)  # More overlap
+                        search_window = 7.0  # Medium 7-second window
+                    
+                    search_end = min(len(audio_data) / sample_rate, search_start + search_window)
+                    
+                    logger.info(f"  Searching window: {search_start:.2f}s - {search_end:.2f}s (constrained by previous term)")
+                    
+                    # Extract search window audio
+                    start_sample = int(search_start * sample_rate)
+                    end_sample = int(search_end * sample_rate)
+                    search_audio = audio_data[start_sample:end_sample]
+                    
+                    # ADAPTIVE CANDIDATE COUNT based on search window size
+                    window_duration = search_end - search_start
+                    if window_duration < 3.0:
+                        num_candidates = 3  # Very narrow search
+                    elif window_duration < 5.0:
+                        num_candidates = 5  # Narrow search
+                    else:
+                        num_candidates = 8  # Broader search
+                    
+                    logger.info(f"  Testing {num_candidates} candidates in {window_duration:.1f}s window")
+                    
+                    candidate_segments = self.boundary_detector.segment_audio(
+                        search_audio, expected_count=num_candidates, start_offset=0.0, force_start_offset=True
+                    )
+                    
+                    # Test each candidate
+                    best_segment = segment
+                    best_confidence = (whisper_confidence + similarity) / 2  # Use combined confidence for original
+                    best_match = is_match
+                    best_transcription = transcribed_text
+                    
+                    logger.info(f"  Testing {len(candidate_segments)} candidate segments...")
+                    
+                    for j, candidate in enumerate(candidate_segments):
+                        try:
+                            # Skip candidates that are too short
+                            cand_duration = candidate.end_time - candidate.start_time
+                            if cand_duration < 0.5:
+                                logger.debug(f"    Candidate {j+1}: Skipped (too short: {cand_duration:.2f}s)")
+                                continue
+                            
+                            cand_transcription = self.speech_verifier.transcribe_audio_segment(
+                                candidate.audio_data, sample_rate
+                            )
+                            
+                            cand_comparison = self.speech_verifier.compare_transcription_with_expected(
+                                cand_transcription['text'], expected_cantonese
+                            )
+                            
+                            cand_confidence = (cand_transcription['confidence'] + cand_comparison['similarity']) / 2
+                            
+                            # Log all candidates for debugging
+                            if cand_comparison['is_match']:
+                                logger.debug(f"    Candidate {j+1}: MATCH '{cand_transcription['text']}' (conf: {cand_confidence:.2f})")
+                            else:
+                                logger.debug(f"    Candidate {j+1}: No match '{cand_transcription['text']}' (conf: {cand_confidence:.2f}, sim: {cand_comparison['similarity']:.2f})")
+                            
+                            # Prioritize semantic matches
+                            if cand_comparison['is_match'] and not best_match:
+                                # Found a match where there wasn't one
+                                logger.info(f"    ✓ Candidate {j+1}: MATCH! '{cand_transcription['text']}' (conf: {cand_confidence:.2f})")
+                                best_segment = candidate
+                                best_confidence = cand_confidence
+                                best_match = True
+                                best_transcription = cand_transcription['text']
+                                # Convert relative times to absolute
+                                best_segment.start_time = search_start + candidate.start_time
+                                best_segment.end_time = search_start + candidate.end_time
+                            elif cand_comparison['is_match'] and best_match and cand_confidence > best_confidence + 0.1:
+                                # Better match
+                                logger.info(f"    ✓ Candidate {j+1}: Better match '{cand_transcription['text']}' (conf: {cand_confidence:.2f})")
+                                best_segment = candidate
+                                best_confidence = cand_confidence
+                                best_transcription = cand_transcription['text']
+                                best_segment.start_time = search_start + candidate.start_time
+                                best_segment.end_time = search_start + candidate.end_time
+                                
+                        except Exception as e:
+                            logger.debug(f"    Candidate {j+1}: Failed - {e}")
+                            continue
+                    
+                    if best_match and best_segment != segment:
+                        logger.info(f"  ✓ ADJUSTED: {best_segment.start_time:.2f}s - {best_segment.end_time:.2f}s ('{best_transcription}')")
+                        segment = best_segment
+                        adjustments += 1
+                        # Update tracking for next term
+                        last_confirmed_end = best_segment.end_time
+                        last_confidence = best_confidence
+                    elif best_match:
+                        logger.info(f"  ✓ VERIFIED: Original segment is best match")
+                        matches += 1
+                        # Update tracking for next term
+                        last_confirmed_end = segment.end_time
+                        last_confidence = best_confidence
+                    else:
+                        logger.warning(f"  ✗ NO MATCH FOUND: Keeping original segment")
+                        failures += 1
+                        # Don't update tracking - keep searching broadly for next term
+                        last_confidence = 0.0
+                else:
+                    logger.info(f"  ✓ VERIFIED: Match confirmed (similarity: {similarity:.2f})")
+                    matches += 1
+                    # Update tracking for next term
+                    last_confirmed_end = segment.end_time
+                    last_confidence = (whisper_confidence + similarity) / 2
+                    best_confidence = (whisper_confidence + similarity) / 2  # Track final confidence
+                
+                # Update the pair with verified/adjusted segment
+                pair.audio_segment = segment
+                pair.alignment_confidence = best_confidence  # Always use best_confidence (tracks final result)
+                verified_pairs.append(pair)
+                
+                logger.info("")  # Blank line between terms
+                
+            except Exception as e:
+                logger.error(f"  ✗ ERROR: {e}")
+                # Keep original segment on error
+                verified_pairs.append(pair)
+                failures += 1
+                logger.info("")
+        
+        logger.info("="*60)
+        logger.info(f"VERIFICATION SUMMARY:")
+        logger.info(f"  ✓ Verified matches: {matches}")
+        logger.info(f"  ↻ Adjusted: {adjustments}")
+        logger.info(f"  ✗ No match found: {failures}")
+        logger.info(f"  Total processed: {len(verified_pairs)}")
+        logger.info("="*60)
+        
+        return verified_pairs
     
     def _calculate_confidence_scores(
         self, aligned_pairs: List[AlignedPair], audio_data: np.ndarray, sample_rate: int
@@ -353,6 +586,57 @@ class ProcessingController:
             self.session_manager._save_session(session)
         
         return session_id
+    
+    def _update_session_with_verified_alignments(
+        self,
+        session_id: str,
+        aligned_pairs: List[AlignedPair],
+        audio_data: np.ndarray,
+        sample_rate: int
+    ) -> None:
+        """
+        Update session with verified and adjusted alignments from Whisper.
+        
+        This method updates both the session data and regenerates audio clips
+        to reflect any adjustments made during speech verification.
+        
+        Args:
+            session_id: Session identifier
+            aligned_pairs: List of aligned pairs with verified/adjusted segments
+            audio_data: Full audio data array
+            sample_rate: Audio sample rate
+        """
+        # Get the session
+        session = self.session_manager.get_session(session_id)
+        if not session:
+            logger.error(f"Session {session_id} not found for update")
+            return
+        
+        # Update each term with verified alignment
+        for i, pair in enumerate(aligned_pairs):
+            if i < len(session.terms):
+                term = session.terms[i]
+                
+                # Update timing from verified segment
+                term.start_time = pair.audio_segment.start_time
+                term.end_time = pair.audio_segment.end_time
+                term.confidence_score = pair.alignment_confidence
+                
+                # Update original boundaries to reflect verified baseline
+                # This ensures reset reverts to Whisper-verified boundaries, not pre-verification
+                term.original_start = pair.audio_segment.start_time
+                term.original_end = pair.audio_segment.end_time
+                
+                # Regenerate audio clip with new boundaries
+                self.audio_extractor.update_term_segment(
+                    session_id, term, audio_data, sample_rate
+                )
+                
+                logger.debug(f"Updated term '{term.english}': {term.start_time:.2f}s - {term.end_time:.2f}s")
+        
+        # Save updated session
+        self.session_manager._save_session(session)
+        logger.info(f"✓ Session updated with {len(aligned_pairs)} verified alignments")
 
     def regenerate_term_alignment(
         self, session_id: str, term_id: str, audio_data: np.ndarray, sample_rate: int

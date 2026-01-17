@@ -25,62 +25,87 @@
         </header>
         
         <main>
-            <!-- File Upload Section -->
-            <section id="upload-section" class="card">
-                <h2>Upload Files</h2>
-                <p class="section-description">Upload your vocabulary document and audio file to begin</p>
-                
-                <form id="upload-form" class="upload-form">
-                    <div class="form-group">
-                        <label for="doc-url">
-                            <span class="label-text">Google Docs/Sheets URL</span>
-                            <span class="label-hint">Paste the URL of your vocabulary document</span>
-                        </label>
-                        <input 
-                            type="url" 
-                            id="doc-url" 
-                            name="doc-url" 
-                            placeholder="https://docs.google.com/..." 
-                            required
-                        >
-                        <div class="validation-feedback" id="url-feedback"></div>
-                    </div>
+            <!-- Two Column Layout: Upload Form + Processing Log -->
+            <div class="upload-container">
+                <!-- Left Column: File Upload Section -->
+                <section id="upload-section" class="card upload-card">
+                    <h2>Upload Files</h2>
+                    <p class="section-description">Upload your vocabulary document and audio file to begin</p>
                     
-                    <div class="form-group">
-                        <label for="audio-file">
-                            <span class="label-text">Audio File</span>
-                            <span class="label-hint">Select an MP3, WAV, or M4A file</span>
-                        </label>
-                        <div class="file-input-wrapper">
+                    <form id="upload-form" class="upload-form">
+                        <div class="form-group">
+                            <label for="doc-url">
+                                <span class="label-text">Google Docs/Sheets URL</span>
+                                <span class="label-hint">Paste the URL of your vocabulary document</span>
+                            </label>
                             <input 
-                                type="file" 
-                                id="audio-file" 
-                                name="audio-file" 
-                                accept=".mp3,.wav,.m4a,audio/mpeg,audio/wav,audio/x-m4a" 
+                                type="url" 
+                                id="doc-url" 
+                                name="doc-url" 
+                                placeholder="https://docs.google.com/..." 
                                 required
                             >
-                            <div class="file-input-display">
-                                <span class="file-icon">📁</span>
-                                <span class="file-name">No file selected</span>
+                            <div class="validation-feedback" id="url-feedback"></div>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="audio-file">
+                                <span class="label-text">Audio File</span>
+                                <span class="label-hint">Select an MP3, WAV, or M4A file</span>
+                            </label>
+                            <div class="file-input-wrapper">
+                                <input 
+                                    type="file" 
+                                    id="audio-file" 
+                                    name="audio-file" 
+                                    accept=".mp3,.wav,.m4a,audio/mpeg,audio/wav,audio/x-m4a" 
+                                    required
+                                >
+                                <div class="file-input-display">
+                                    <span class="file-icon">📁</span>
+                                    <span class="file-name">No file selected</span>
+                                </div>
+                            </div>
+                            <div class="validation-feedback" id="file-feedback"></div>
+                        </div>
+                        
+                        <div class="form-actions">
+                            <button type="submit" id="process-btn" class="btn btn-primary" disabled>
+                                <span class="btn-icon">⚙️</span>
+                                Process
+                            </button>
+                            <div class="upload-progress" id="upload-progress" style="display: none;">
+                                <div class="progress-bar">
+                                    <div class="progress-fill" id="progress-fill"></div>
+                                </div>
+                                <span class="progress-text" id="progress-text">Uploading...</span>
                             </div>
                         </div>
-                        <div class="validation-feedback" id="file-feedback"></div>
+                    </form>
+                </section>
+                
+                <!-- Right Column: Processing Log Panel -->
+                <section id="processing-log-section" class="card log-card">
+                    <h2>Processing Log</h2>
+                    <p class="section-description">Real-time verification and alignment progress</p>
+                    
+                    <div id="processing-log" class="processing-log">
+                        <div class="log-placeholder">
+                            <span class="log-icon">📋</span>
+                            <p>Processing logs will appear here when you upload files</p>
+                        </div>
                     </div>
                     
-                    <div class="form-actions">
-                        <button type="submit" id="process-btn" class="btn btn-primary" disabled>
-                            <span class="btn-icon">⚙️</span>
-                            Process
+                    <div class="log-controls">
+                        <button id="clear-log-btn" class="btn btn-secondary btn-sm" disabled>
+                            Clear Log
                         </button>
-                        <div class="upload-progress" id="upload-progress" style="display: none;">
-                            <div class="progress-bar">
-                                <div class="progress-fill" id="progress-fill"></div>
-                            </div>
-                            <span class="progress-text" id="progress-text">Uploading...</span>
-                        </div>
+                        <button id="copy-log-btn" class="btn btn-secondary btn-sm" disabled>
+                            Copy to Clipboard
+                        </button>
                     </div>
-                </form>
-            </section>
+                </section>
+            </div>
             
             <!-- Alignment Review Section -->
             <section id="alignment-section" class="card" style="display: none;">
