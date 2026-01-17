@@ -1,6 +1,7 @@
 """Desktop shortcut creation for the web interface."""
 
 import os
+import shlex
 import sys
 import platform
 from pathlib import Path
@@ -81,10 +82,13 @@ class WebShortcutCreator:
         try:
             script_path = self.desktop_path / f"{name}.command"
             
-            # Quote executable path to handle spaces
+            # Use shlex.quote to properly escape paths with spaces
+            quoted_cwd = shlex.quote(str(Path.cwd()))
+            quoted_executable = shlex.quote(sys.executable)
+            
             script_content = f"""#!/bin/bash
-cd "{Path.cwd()}"
-"{sys.executable}" -m cantonese_anki_generator.web.run
+cd {quoted_cwd}
+{quoted_executable} -m cantonese_anki_generator.web.run
 """
             
             with open(script_path, 'w') as f:
@@ -104,17 +108,17 @@ cd "{Path.cwd()}"
         try:
             desktop_file_path = self.desktop_path / f"{name}.desktop"
             
-            # Quote paths to handle spaces
-            exec_path = f'"{sys.executable}"'
-            working_dir = f'"{Path.cwd()}"'
+            # Use shlex.quote to properly escape paths with spaces
+            quoted_executable = shlex.quote(sys.executable)
+            quoted_cwd = shlex.quote(str(Path.cwd()))
             
             desktop_content = f"""[Desktop Entry]
 Version=1.0
 Type=Application
 Name={name}
 Comment=Web interface for manual audio alignment
-Exec={exec_path} -m cantonese_anki_generator.web.run
-Path={working_dir}
+Exec={quoted_executable} -m cantonese_anki_generator.web.run
+Path={quoted_cwd}
 Terminal=true
 Categories=Education;Languages;
 StartupNotify=true

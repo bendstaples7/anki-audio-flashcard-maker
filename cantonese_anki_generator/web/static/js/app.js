@@ -2134,6 +2134,9 @@ async function regenerateTerm(termId) {
         return;
     }
     
+    // Set flag to prevent concurrent regenerations
+    AppState.regenerationInProgress = true;
+    
     try {
         // Show loading state
         const regenBtn = document.querySelector(`.regen-btn[data-term-id="${termId}"]`);
@@ -2141,6 +2144,11 @@ async function regenerateTerm(termId) {
             regenBtn.disabled = true;
             regenBtn.innerHTML = '⏳ Regenerating...';
         }
+        
+        // Disable all regenerate-from buttons during processing
+        document.querySelectorAll('.regen-from-btn').forEach(btn => {
+            btn.disabled = true;
+        });
         
         // Call backend API to regenerate this term
         const response = await fetchWithRetry(`${API_BASE}/session/${AppState.sessionId}/regenerate/${termId}`, {
@@ -2190,12 +2198,20 @@ async function regenerateTerm(termId) {
         console.error(`Failed to regenerate term ${termId}:`, error);
         showError(error.message || 'Failed to regenerate alignment');
     } finally {
+        // Clear the flag
+        AppState.regenerationInProgress = false;
+        
         // Restore button state
         const regenBtn = document.querySelector(`.regen-btn[data-term-id="${termId}"]`);
         if (regenBtn) {
             regenBtn.disabled = false;
             regenBtn.innerHTML = '🔄 Regenerate';
         }
+        
+        // Restore all regenerate-from buttons
+        document.querySelectorAll('.regen-from-btn').forEach(btn => {
+            btn.disabled = false;
+        });
     }
 }
 

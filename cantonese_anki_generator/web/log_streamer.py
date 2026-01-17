@@ -4,6 +4,7 @@ Real-time log streaming for processing feedback.
 Provides Server-Sent Events (SSE) endpoint for streaming processing logs to the frontend.
 """
 
+import json
 import logging
 import queue
 import threading
@@ -89,7 +90,8 @@ class LogStreamer:
         
         try:
             # Send initial connection message
-            yield f"data: {{'type': 'connected', 'message': 'Log stream connected'}}\n\n"
+            connection_msg = json.dumps({'type': 'connected', 'message': 'Log stream connected'})
+            yield f"data: {connection_msg}\n\n"
             
             while True:
                 try:
@@ -97,7 +99,6 @@ class LogStreamer:
                     log_entry = message_queue.get(timeout=30)
                     
                     # Format as SSE
-                    import json
                     data = json.dumps(log_entry)
                     yield f"data: {data}\n\n"
                     
@@ -105,8 +106,8 @@ class LogStreamer:
                     # Send keepalive ping
                     yield f": keepalive\n\n"
                     
-        except GeneratorExit:
-            # Client disconnected
+        finally:
+            # Always clean up client on any exit (GeneratorExit, exceptions, etc.)
             self.remove_client(client_id)
 
 

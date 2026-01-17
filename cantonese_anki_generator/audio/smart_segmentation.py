@@ -193,7 +193,7 @@ class SmartBoundaryDetector:
                         # Scan from the beginning to find where speech actually starts
                         speech_threshold = max(0.01, overall_rms * 0.15)  # More lenient threshold
                         
-                        for i in range(0, len(audio_data) - window_size, hop_size):
+                        for i in range(0, check_samples - window_size, hop_size):
                             window = audio_data[i:i + window_size]
                             window_rms = np.sqrt(np.mean(window ** 2))
                             

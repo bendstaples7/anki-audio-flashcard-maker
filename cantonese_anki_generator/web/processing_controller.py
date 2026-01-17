@@ -112,22 +112,7 @@ class ProcessingController:
         logger.info("📊 Calculating confidence scores...")
         self._calculate_confidence_scores(aligned_pairs, audio_data, sample_rate)
         
-        # Stage 6: Create session
-        logger.info("")
-        logger.info("💾 Creating session...")
-        session_id = self._create_alignment_session(
-            doc_url, audio_file_path, aligned_pairs, audio_duration
-        )
-        
-        # Stage 7: Extract audio files
-        logger.info("")
-        logger.info("🎧 Extracting audio clips...")
-        session = self.session_manager.get_session(session_id)
-        segment_paths = self.audio_extractor.extract_session_audio_segments(
-            session, audio_data, sample_rate
-        )
-        
-        # Stage 8: VERIFY WITH WHISPER
+        # Stage 6: VERIFY WITH WHISPER (before creating session)
         logger.info("")
         logger.info("="*60)
         logger.info("🎤 VERIFYING WITH SPEECH RECOGNITION")
@@ -136,11 +121,19 @@ class ProcessingController:
             aligned_pairs, audio_data, sample_rate
         )
         
-        # Stage 9: UPDATE SESSION WITH VERIFIED ALIGNMENTS
+        # Stage 7: Create session with verified alignments
         logger.info("")
-        logger.info("💾 Updating session with verified alignments...")
-        self._update_session_with_verified_alignments(
-            session_id, aligned_pairs, audio_data, sample_rate
+        logger.info("💾 Creating session with verified alignments...")
+        session_id = self._create_alignment_session(
+            doc_url, audio_file_path, aligned_pairs, audio_duration
+        )
+        
+        # Stage 8: Extract audio files with verified boundaries
+        logger.info("")
+        logger.info("🎧 Extracting audio clips...")
+        session = self.session_manager.get_session(session_id)
+        segment_paths = self.audio_extractor.extract_session_audio_segments(
+            session, audio_data, sample_rate
         )
         
         logger.info("")
@@ -368,7 +361,7 @@ class ProcessingController:
                     
                     # Test each candidate
                     best_segment = segment
-                    best_confidence = similarity
+                    best_confidence = (whisper_confidence + similarity) / 2  # Use combined confidence for original
                     best_match = is_match
                     best_transcription = transcribed_text
                     
@@ -446,10 +439,11 @@ class ProcessingController:
                     # Update tracking for next term
                     last_confirmed_end = segment.end_time
                     last_confidence = (whisper_confidence + similarity) / 2
+                    best_confidence = (whisper_confidence + similarity) / 2  # Track final confidence
                 
                 # Update the pair with verified/adjusted segment
                 pair.audio_segment = segment
-                pair.alignment_confidence = best_confidence if not is_match else (whisper_confidence + similarity) / 2
+                pair.alignment_confidence = best_confidence  # Always use best_confidence (tracks final result)
                 verified_pairs.append(pair)
                 
                 logger.info("")  # Blank line between terms
@@ -627,6 +621,11 @@ class ProcessingController:
                 term.start_time = pair.audio_segment.start_time
                 term.end_time = pair.audio_segment.end_time
                 term.confidence_score = pair.alignment_confidence
+                
+                # Update original boundaries to reflect verified baseline
+                # This ensures reset reverts to Whisper-verified boundaries, not pre-verification
+                term.original_start = pair.audio_segment.start_time
+                term.original_end = pair.audio_segment.end_time
                 
                 # Regenerate audio clip with new boundaries
                 self.audio_extractor.update_term_segment(
