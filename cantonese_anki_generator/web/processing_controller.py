@@ -136,6 +136,13 @@ class ProcessingController:
             aligned_pairs, audio_data, sample_rate
         )
         
+        # Stage 9: UPDATE SESSION WITH VERIFIED ALIGNMENTS
+        logger.info("")
+        logger.info("💾 Updating session with verified alignments...")
+        self._update_session_with_verified_alignments(
+            session_id, aligned_pairs, audio_data, sample_rate
+        )
+        
         logger.info("")
         logger.info("="*60)
         logger.info("✅ COMPLETE - Ready to review")
@@ -585,6 +592,52 @@ class ProcessingController:
             self.session_manager._save_session(session)
         
         return session_id
+    
+    def _update_session_with_verified_alignments(
+        self,
+        session_id: str,
+        aligned_pairs: List[AlignedPair],
+        audio_data: np.ndarray,
+        sample_rate: int
+    ) -> None:
+        """
+        Update session with verified and adjusted alignments from Whisper.
+        
+        This method updates both the session data and regenerates audio clips
+        to reflect any adjustments made during speech verification.
+        
+        Args:
+            session_id: Session identifier
+            aligned_pairs: List of aligned pairs with verified/adjusted segments
+            audio_data: Full audio data array
+            sample_rate: Audio sample rate
+        """
+        # Get the session
+        session = self.session_manager.get_session(session_id)
+        if not session:
+            logger.error(f"Session {session_id} not found for update")
+            return
+        
+        # Update each term with verified alignment
+        for i, pair in enumerate(aligned_pairs):
+            if i < len(session.terms):
+                term = session.terms[i]
+                
+                # Update timing from verified segment
+                term.start_time = pair.audio_segment.start_time
+                term.end_time = pair.audio_segment.end_time
+                term.confidence_score = pair.alignment_confidence
+                
+                # Regenerate audio clip with new boundaries
+                self.audio_extractor.update_term_segment(
+                    session_id, term, audio_data, sample_rate
+                )
+                
+                logger.debug(f"Updated term '{term.english}': {term.start_time:.2f}s - {term.end_time:.2f}s")
+        
+        # Save updated session
+        self.session_manager._save_session(session)
+        logger.info(f"✓ Session updated with {len(aligned_pairs)} verified alignments")
 
     def regenerate_term_alignment(
         self, session_id: str, term_id: str, audio_data: np.ndarray, sample_rate: int
