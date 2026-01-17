@@ -31,6 +31,48 @@ def create_app():
     os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
     os.makedirs(app.config['SESSION_FOLDER'], exist_ok=True)
     
+    # Clear old sessions and uploads on startup to prevent stale data
+    # Only do this in the main process, not the reloader process
+    if not os.environ.get('WERKZEUG_RUN_MAIN'):
+        import shutil
+        try:
+            # Clear sessions
+            for item in os.listdir(app.config['SESSION_FOLDER']):
+                item_path = os.path.join(app.config['SESSION_FOLDER'], item)
+                if os.path.isfile(item_path):
+                    os.unlink(item_path)
+                elif os.path.isdir(item_path):
+                    shutil.rmtree(item_path)
+            
+            # Clear uploads
+            for item in os.listdir(app.config['UPLOAD_FOLDER']):
+                item_path = os.path.join(app.config['UPLOAD_FOLDER'], item)
+                if os.path.isfile(item_path):
+                    os.unlink(item_path)
+                elif os.path.isdir(item_path):
+                    shutil.rmtree(item_path)
+            
+            # Clear audio segments
+            audio_segments_dir = os.path.join(os.getcwd(), 'temp', 'audio_segments')
+            if os.path.exists(audio_segments_dir):
+                for item in os.listdir(audio_segments_dir):
+                    item_path = os.path.join(audio_segments_dir, item)
+                    if os.path.isfile(item_path):
+                        os.unlink(item_path)
+                    elif os.path.isdir(item_path):
+                        shutil.rmtree(item_path)
+            
+            print("✓ Cleared old sessions and uploads")
+        except Exception as e:
+            print(f"⚠️  Warning: Could not clear old data: {e}")
+    
+    # Set up log streaming
+    from cantonese_anki_generator.web.log_streamer import setup_log_streaming, log_streamer
+    setup_log_streaming(app)
+    
+    # Send a test message to verify streaming works
+    log_streamer.broadcast_log("Log streaming initialized", "info")
+    
     # Register routes
     register_routes(app)
     

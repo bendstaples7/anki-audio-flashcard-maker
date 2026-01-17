@@ -72,6 +72,32 @@ def health_check():
     })
 
 
+@bp.route('/logs/stream', methods=['GET'])
+def stream_logs():
+    """
+    Server-Sent Events endpoint for streaming processing logs.
+    
+    Returns:
+        SSE stream of log messages
+    """
+    from cantonese_anki_generator.web.log_streamer import log_streamer
+    import uuid
+    
+    client_id = str(uuid.uuid4())
+    
+    def generate():
+        return log_streamer.generate_stream(client_id)
+    
+    return current_app.response_class(
+        generate(),
+        mimetype='text/event-stream',
+        headers={
+            'Cache-Control': 'no-cache',
+            'X-Accel-Buffering': 'no'
+        }
+    )
+
+
 def validate_google_url(url: str) -> Tuple[bool, Optional[str], Optional[str]]:
     """
     Validate Google Docs or Sheets URL format and accessibility.

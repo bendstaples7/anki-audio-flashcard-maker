@@ -9,6 +9,7 @@ const AppState = {
     alignments: [],
     currentlyPlaying: null,
     pendingUpdates: new Map(),
+    regenerationInProgress: false,  // Track if regeneration is running
     uploadedFiles: {
         url: null,
         audioFile: null,
@@ -52,6 +53,12 @@ function initApp() {
     
     // Set up back button
     setupBackButton();
+    
+    // Set up log streaming
+    setupLogStreaming();
+    
+    // Set up log controls
+    setupLogControls();
     
     // Initialize session loading (check URL for session ID)
     initSessionLoading();
@@ -327,6 +334,11 @@ function updateProcessButton() {
  */
 async function handleFormSubmit(event) {
     event.preventDefault();
+    
+    // Clear any existing sessions to force fresh processing
+    // This ensures we don't load cached results
+    AppState.sessionId = null;
+    AppState.currentSession = null;
     
     // Disable form during upload
     setFormEnabled(false);
@@ -900,63 +912,11 @@ function returnToUploadScreen() {
         }
     }
     
-    // Stop all audio playback
-    stopAllAudio();
+    // Clear the processing log
+    clearLog();
     
-    // Destroy all waveforms to free memory
-    destroyAllWaveforms();
-    
-    // Clear application state
-    AppState.sessionId = null;
-    AppState.currentSession = null;
-    AppState.alignments = [];
-    AppState.currentlyPlaying = null;
-    AppState.pendingUpdates.clear();
-    
-    // Clear uploaded files
-    AppState.uploadedFiles = {
-        url: null,
-        audioFile: null,
-        audioFilePath: null
-    };
-    
-    // Reset validation state
-    AppState.validationState = {
-        urlValid: false,
-        audioValid: false
-    };
-    
-    // Clear form inputs
-    elements.docUrlInput.value = '';
-    elements.audioFileInput.value = '';
-    elements.fileNameDisplay.textContent = 'No file selected';
-    
-    // Clear feedback messages
-    clearFeedback(elements.urlFeedback);
-    clearFeedback(elements.fileFeedback);
-    
-    // Update process button state
-    updateProcessButton();
-    
-    // Clear alignment rows
-    const alignmentRows = document.getElementById('alignment-rows');
-    if (alignmentRows) {
-        alignmentRows.innerHTML = '';
-    }
-    
-    // Remove session ID from URL
-    const url = new URL(window.location);
-    url.searchParams.delete('session');
-    window.history.pushState({}, '', url);
-    
-    // Show upload section, hide alignment section
-    elements.uploadSection.style.display = 'block';
-    elements.alignmentSection.style.display = 'none';
-    
-    // Scroll to top
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-    
-    console.log('Returned to upload screen');
+    // Do a full page reload to root URL (no session parameter)
+    window.location.href = window.location.origin + window.location.pathname;
 }
 
 // Initialize when DOM is ready
@@ -2153,6 +2113,12 @@ function removeManualAdjustmentIndicator(termId) {
  * @param {string} termId - Term identifier
  */
 async function regenerateTerm(termId) {
+    // Prevent regeneration during bulk regeneration
+    if (AppState.regenerationInProgress) {
+        showError('Bulk regeneration in progress. Please wait for it to complete.');
+        return;
+    }
+    
     const alignment = AppState.alignments.find(a => a.term_id === termId);
     if (!alignment) {
         showError('Term not found');
@@ -2239,6 +2205,12 @@ async function regenerateTerm(termId) {
  * @param {string} termId - Term identifier to start from
  */
 async function regenerateFromTerm(termId) {
+    // Prevent multiple simultaneous regenerations
+    if (AppState.regenerationInProgress) {
+        showError('Regeneration already in progress. Please wait for it to complete.');
+        return;
+    }
+    
     const alignment = AppState.alignments.find(a => a.term_id === termId);
     if (!alignment) {
         showError('Term not found');
@@ -2260,13 +2232,19 @@ async function regenerateFromTerm(termId) {
         return;
     }
     
+    // Set flag to prevent concurrent regenerations
+    AppState.regenerationInProgress = true;
+    
     try {
-        // Show loading state
-        const regenFromBtn = document.querySelector(`.regen-from-btn[data-term-id="${termId}"]`);
-        if (regenFromBtn) {
-            regenFromBtn.disabled = true;
-            regenFromBtn.innerHTML = '⏳ Starting...';
-        }
+        // Disable ALL regenerate buttons during processing
+        document.querySelectorAll('.regen-from-btn').forEach(btn => {
+            btn.disabled = true;
+            if (btn.dataset.termId === termId) {
+                btn.innerHTML = '⏳ Starting...';
+            } else {
+                btn.innerHTML = '⏳ Busy...';
+            }
+        });
         
         // Get the end time of the previous term (or 0 if this is the first term)
         let startFromTime = 0;
@@ -2374,12 +2352,14 @@ async function regenerateFromTerm(termId) {
         console.error(`Failed to regenerate from term ${termId}:`, error);
         showError(error.message || 'Failed to regenerate alignments');
     } finally {
-        // Restore button state
-        const regenFromBtn = document.querySelector(`.regen-from-btn[data-term-id="${termId}"]`);
-        if (regenFromBtn) {
-            regenFromBtn.disabled = false;
-            regenFromBtn.innerHTML = '🔄➡ From Here';
-        }
+        // Clear the flag
+        AppState.regenerationInProgress = false;
+        
+        // Restore ALL button states
+        document.querySelectorAll('.regen-from-btn').forEach(btn => {
+            btn.disabled = false;
+            btn.innerHTML = '🔄➡ From Here';
+        });
     }
 }
 
@@ -3436,3 +3416,251 @@ async function updateAlignmentTableDisplay(alignments) {
     console.log(`Updated table display with ${alignments.length} terms`);
 }
 
+
+/**
+ * Log Streaming with Server-Sent Events
+ * Real-time processing log display
+ */
+
+// Log streaming state
+let logEventSource = null;
+let logBuffer = [];
+
+/**
+ * Set up log streaming from the server
+ */
+function setupLogStreaming() {
+    const logContainer = document.getElementById('processing-log');
+    
+    if (!logContainer) {
+        console.warn('Processing log container not found');
+        return;
+    }
+    
+    // Connect to SSE endpoint
+    try {
+        logEventSource = new EventSource(`${API_BASE}/logs/stream`);
+        
+        logEventSource.onopen = () => {
+            console.log('Log stream connected');
+            // Remove placeholder if present
+            const placeholder = logContainer.querySelector('.log-placeholder');
+            if (placeholder) {
+                placeholder.remove();
+            }
+        };
+        
+        logEventSource.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data);
+                
+                // Handle connection message
+                if (data.type === 'connected') {
+                    console.log('Log stream established:', data.message);
+                    return;
+                }
+                
+                // Handle log entry
+                if (data.timestamp && data.message) {
+                    appendLogEntry(data);
+                }
+            } catch (error) {
+                console.error('Failed to parse log message:', error);
+            }
+        };
+        
+        logEventSource.onerror = (error) => {
+            console.error('Log stream error:', error);
+            
+            // Don't show error to user if it's just a connection close
+            if (logEventSource.readyState === EventSource.CLOSED) {
+                console.log('Log stream closed');
+            } else {
+                // Try to reconnect after a delay
+                setTimeout(() => {
+                    if (logEventSource && logEventSource.readyState === EventSource.CLOSED) {
+                        console.log('Attempting to reconnect log stream...');
+                        setupLogStreaming();
+                    }
+                }, 5000);
+            }
+        };
+        
+        console.log('Log streaming initialized');
+        
+    } catch (error) {
+        console.error('Failed to initialize log streaming:', error);
+    }
+}
+
+/**
+ * Append a log entry to the processing log
+ * @param {Object} logEntry - Log entry with timestamp, level, and message
+ */
+function appendLogEntry(logEntry) {
+    const logContainer = document.getElementById('processing-log');
+    
+    if (!logContainer) {
+        return;
+    }
+    
+    // Remove placeholder if present
+    const placeholder = logContainer.querySelector('.log-placeholder');
+    if (placeholder) {
+        placeholder.remove();
+    }
+    
+    // Create log entry element
+    const entry = document.createElement('div');
+    entry.className = `log-entry log-${logEntry.level}`;
+    
+    // Format timestamp
+    const timestamp = document.createElement('span');
+    timestamp.className = 'log-timestamp';
+    timestamp.textContent = `[${logEntry.timestamp}]`;
+    
+    // Format message
+    const message = document.createElement('span');
+    message.className = 'log-message';
+    message.textContent = logEntry.message;
+    
+    entry.appendChild(timestamp);
+    entry.appendChild(message);
+    
+    // Append to container
+    logContainer.appendChild(entry);
+    
+    // Add to buffer for copy functionality
+    logBuffer.push(`[${logEntry.timestamp}] ${logEntry.message}`);
+    
+    // Auto-scroll to bottom
+    logContainer.scrollTop = logContainer.scrollHeight;
+    
+    // Enable log control buttons
+    enableLogControls();
+}
+
+/**
+ * Set up log control buttons (clear, copy)
+ */
+function setupLogControls() {
+    const clearBtn = document.getElementById('clear-log-btn');
+    const copyBtn = document.getElementById('copy-log-btn');
+    
+    if (clearBtn) {
+        clearBtn.addEventListener('click', clearLog);
+    }
+    
+    if (copyBtn) {
+        copyBtn.addEventListener('click', copyLogToClipboard);
+    }
+}
+
+/**
+ * Clear the processing log
+ */
+function clearLog() {
+    const logContainer = document.getElementById('processing-log');
+    
+    if (!logContainer) {
+        return;
+    }
+    
+    // Clear all log entries
+    logContainer.innerHTML = '';
+    
+    // Add placeholder back
+    const placeholder = document.createElement('div');
+    placeholder.className = 'log-placeholder';
+    placeholder.innerHTML = `
+        <span class="log-icon">📋</span>
+        <p>Processing logs will appear here when you upload files</p>
+    `;
+    logContainer.appendChild(placeholder);
+    
+    // Clear buffer
+    logBuffer = [];
+    
+    // Disable control buttons
+    disableLogControls();
+    
+    console.log('Processing log cleared');
+}
+
+/**
+ * Copy log contents to clipboard
+ */
+async function copyLogToClipboard() {
+    if (logBuffer.length === 0) {
+        showError('No log entries to copy');
+        return;
+    }
+    
+    const logText = logBuffer.join('\n');
+    
+    try {
+        await navigator.clipboard.writeText(logText);
+        showSuccess('Log copied to clipboard');
+    } catch (error) {
+        console.error('Failed to copy log:', error);
+        
+        // Fallback: create a temporary textarea
+        const textarea = document.createElement('textarea');
+        textarea.value = logText;
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+        
+        try {
+            document.execCommand('copy');
+            showSuccess('Log copied to clipboard');
+        } catch (fallbackError) {
+            showError('Failed to copy log to clipboard');
+        }
+        
+        document.body.removeChild(textarea);
+    }
+}
+
+/**
+ * Enable log control buttons
+ */
+function enableLogControls() {
+    const clearBtn = document.getElementById('clear-log-btn');
+    const copyBtn = document.getElementById('copy-log-btn');
+    
+    if (clearBtn) {
+        clearBtn.disabled = false;
+    }
+    
+    if (copyBtn) {
+        copyBtn.disabled = false;
+    }
+}
+
+/**
+ * Disable log control buttons
+ */
+function disableLogControls() {
+    const clearBtn = document.getElementById('clear-log-btn');
+    const copyBtn = document.getElementById('copy-log-btn');
+    
+    if (clearBtn) {
+        clearBtn.disabled = true;
+    }
+    
+    if (copyBtn) {
+        copyBtn.disabled = true;
+    }
+}
+
+/**
+ * Close log stream when leaving the page
+ */
+window.addEventListener('beforeunload', () => {
+    if (logEventSource) {
+        logEventSource.close();
+        console.log('Log stream closed on page unload');
+    }
+});
