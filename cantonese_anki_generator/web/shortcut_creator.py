@@ -81,9 +81,10 @@ class WebShortcutCreator:
         try:
             script_path = self.desktop_path / f"{name}.command"
             
+            # Quote executable path to handle spaces
             script_content = f"""#!/bin/bash
 cd "{Path.cwd()}"
-{sys.executable} -m cantonese_anki_generator.web.run
+"{sys.executable}" -m cantonese_anki_generator.web.run
 """
             
             with open(script_path, 'w') as f:
