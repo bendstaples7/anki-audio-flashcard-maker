@@ -103,13 +103,17 @@ cd "{Path.cwd()}"
         try:
             desktop_file_path = self.desktop_path / f"{name}.desktop"
             
+            # Quote paths to handle spaces
+            exec_path = f'"{sys.executable}"'
+            working_dir = f'"{Path.cwd()}"'
+            
             desktop_content = f"""[Desktop Entry]
 Version=1.0
 Type=Application
 Name={name}
 Comment=Web interface for manual audio alignment
-Exec={sys.executable} -m cantonese_anki_generator.web.run
-Path={Path.cwd()}
+Exec={exec_path} -m cantonese_anki_generator.web.run
+Path={working_dir}
 Terminal=true
 Categories=Education;Languages;
 StartupNotify=true
