@@ -447,9 +447,9 @@ class SegmentReassigner:
         assignments: List[Dict],
         similarity_matrix: np.ndarray,
         transcriptions: List[Dict],
-        min_similarity_threshold: float = 0.3,
-        audio_data: Optional[np.ndarray] = None,
-        sample_rate: Optional[int] = None
+        audio_data: np.ndarray,
+        sample_rate: int,
+        min_similarity_threshold: float = 0.3
     ) -> List[AlignedPair]:
         """
         Create new aligned pairs based on optimal assignment.
@@ -468,6 +468,8 @@ class SegmentReassigner:
             similarity_matrix: Similarity matrix used for assignment
             transcriptions: Transcription data with confidence scores
             min_similarity_threshold: Minimum similarity to accept assignment (default 0.3)
+            audio_data: Full audio data array (REQUIRED for rebuilding segments)
+            sample_rate: Audio sample rate (REQUIRED for rebuilding segments)
             
         Returns:
             New list of aligned pairs in original vocabulary order with reassigned audio
@@ -1688,8 +1690,8 @@ class GlobalReassignmentCoordinator:
         self,
         aligned_pairs: List[AlignedPair],
         verification_results: Dict,
-        audio_data: np.ndarray = None,
-        sample_rate: int = None,
+        audio_data: np.ndarray,
+        sample_rate: int,
         enable_logging: bool = True
     ) -> Tuple[List[AlignedPair], Dict]:
         """
