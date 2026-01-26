@@ -522,8 +522,12 @@ class ProcessingController:
             Reassigned and refined aligned pairs
         """
         if not self.speech_verifier:
-            logger.warning("⚠️  Speech verifier not available - skipping global reassignment")
-            return aligned_pairs
+            error_msg = (
+                "Speech verifier (Whisper) is required for global reassignment but is not available. "
+                "This is a critical dependency - without it, duplicate audio bugs cannot be detected and fixed."
+            )
+            logger.error(f"❌ {error_msg}")
+            raise RuntimeError(error_msg)
         
         logger.info("📍 CALL SITE: _perform_global_reassignment() in process_upload()")
         logger.info(f"   - aligned_pairs: {len(aligned_pairs)} pairs")
