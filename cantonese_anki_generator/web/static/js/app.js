@@ -1269,6 +1269,10 @@ async function renderTermWaveform(termId, audioUrl, startTime, endTime) {
         const existingWaveform = getTermWaveform(termId);
         if (existingWaveform) {
             console.log(`Destroying existing waveform for term ${termId}`);
+            // Properly clean up regions plugin and all event listeners
+            if (existingWaveform.regions) {
+                existingWaveform.regions.destroy();
+            }
             existingWaveform.instance.destroy();
             WaveSurferInstances.termWaveforms.delete(termId);
         }
@@ -1329,9 +1333,19 @@ function setupRegionDragHandlersForTrim(termId, regionsPlugin) {
     const originalStartTime = alignment.start_time;
     const originalDuration = alignment.end_time - alignment.start_time;
     
+    // Track if user is actively dragging (prevents auto-trim on programmatic updates)
+    let userIsDragging = false;
+    
+    // Listen for region update start (user starts dragging)
+    regionsPlugin.on('region-update-start', (region) => {
+        if (region.id === `region-${termId}`) {
+            userIsDragging = true;
+        }
+    });
+    
     // Listen for region update events (while dragging)
     regionsPlugin.on('region-updated', (region) => {
-        if (region.id === `region-${termId}`) {
+        if (region.id === `region-${termId}` && userIsDragging) {
             // Region times are relative to the segment (0 to duration)
             // Convert to absolute times by adding the original start time
             // and scaling based on the original duration
@@ -1361,22 +1375,18 @@ function setupRegionDragHandlersForTrim(termId, regionsPlugin) {
                 startInput.value = absoluteStart.toFixed(2);
                 endInput.value = absoluteEnd.toFixed(2);
             }
-            
-            console.log(`Region dragged for ${termId}: ${absoluteStart.toFixed(2)}s - ${absoluteEnd.toFixed(2)}s (absolute)`);
         }
     });
     
     // Listen for region update end (when user finishes dragging)
     regionsPlugin.on('region-update-end', async (region) => {
-        if (region.id === `region-${termId}`) {
-            console.log(`Region drag ended for ${termId}, triggering trim`);
+        if (region.id === `region-${termId}` && userIsDragging) {
+            userIsDragging = false;
             
             // Automatically trigger trim with the new boundaries from input fields
             await handleTrimBoundaries(termId);
         }
     });
-    
-    console.log(`Trim drag handlers set up for term ${termId}`);
 }
 
 /**
@@ -2284,7 +2294,7 @@ async function regenerateFromTerm(termId) {
             })
         });
         
-        // Poll for progress
+        // Poll for progress (only update progress bar, NOT waveforms)
         let progressInterval = setInterval(async () => {
             try {
                 const progressResponse = await fetch(`${API_BASE}/session/${AppState.sessionId}/regenerate/progress`);
@@ -2331,6 +2341,10 @@ async function regenerateFromTerm(termId) {
         // Update local state with all regenerated terms
         const updatedTerms = data.data.terms;
         
+        // Use a single cache buster for all waveforms to prevent jiggling
+        const cacheBuster = Date.now();
+        
+        // Update state and inputs first (synchronous)
         for (const updatedTerm of updatedTerms) {
             const localAlignment = AppState.alignments.find(a => a.term_id === updatedTerm.term_id);
             if (localAlignment) {
@@ -2339,28 +2353,33 @@ async function regenerateFromTerm(termId) {
                 localAlignment.confidence_score = updatedTerm.confidence_score;
                 localAlignment.is_manually_adjusted = false;
                 
-                // Update UI for this term
+                // Update UI inputs for this term
                 const startInput = document.getElementById(`start-${updatedTerm.term_id}`);
                 const endInput = document.getElementById(`end-${updatedTerm.term_id}`);
                 if (startInput) startInput.value = localAlignment.start_time.toFixed(2);
                 if (endInput) endInput.value = localAlignment.end_time.toFixed(2);
                 
-                // Reload waveform
-                const cacheBuster = Date.now();
-                await renderTermWaveform(
-                    updatedTerm.term_id,
-                    `/api/audio/${AppState.sessionId}/${updatedTerm.term_id}?t=${cacheBuster}`,
-                    localAlignment.start_time,
-                    localAlignment.end_time
-                );
-                
-                // Update full waveform
+                // Update full waveform boundary markers
                 updateFullWaveformBoundary(updatedTerm.term_id, localAlignment.start_time, localAlignment.end_time);
                 
                 // Remove manual adjustment indicator if present
                 removeManualAdjustmentIndicator(updatedTerm.term_id);
             }
         }
+        
+        // Render all waveforms in parallel (prevents sequential jiggling)
+        await Promise.all(updatedTerms.map(updatedTerm => {
+            const localAlignment = AppState.alignments.find(a => a.term_id === updatedTerm.term_id);
+            if (localAlignment) {
+                return renderTermWaveform(
+                    updatedTerm.term_id,
+                    `/api/audio/${AppState.sessionId}/${updatedTerm.term_id}?t=${cacheBuster}`,
+                    localAlignment.start_time,
+                    localAlignment.end_time
+                );
+            }
+            return Promise.resolve();
+        }));
         
         showSuccess(`${updatedTerms.length} term(s) regenerated successfully from "${alignment.english}"`);
         
