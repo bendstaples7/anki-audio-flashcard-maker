@@ -15,6 +15,7 @@ from cantonese_anki_generator.processors.google_sheets_parser import GoogleSheet
 from cantonese_anki_generator.audio.loader import AudioLoader
 from cantonese_anki_generator.audio.smart_segmentation import SmartBoundaryDetector
 from cantonese_anki_generator.models import VocabularyEntry, AudioSegment, AlignedPair
+from cantonese_anki_generator.alignment.global_reassignment import GlobalReassignmentCoordinator
 from .session_models import AlignmentSession, TermAlignment, generate_session_id, generate_term_id
 from .session_manager import SessionManager
 from .audio_extractor import AudioExtractor
@@ -121,16 +122,50 @@ class ProcessingController:
             aligned_pairs, audio_data, sample_rate
         )
         
-        # Stage 7: Create session with verified alignments
+        # Stage 7: GLOBAL REASSIGNMENT with boundary refinement
+        logger.info("")
+        logger.info("="*60)
+        logger.info("🌐 GLOBAL TRANSCRIPTION-BASED REASSIGNMENT")
+        logger.info("="*60)
+        aligned_pairs = self._perform_global_reassignment(
+            aligned_pairs, audio_data, sample_rate
+        )
+        
+        # Stage 8: Create session with verified alignments
         logger.info("")
         logger.info("💾 Creating session with verified alignments...")
         session_id = self._create_alignment_session(
             doc_url, audio_file_path, aligned_pairs, audio_duration
         )
         
-        # Stage 8: Extract audio files with verified boundaries
+        # Stage 8.5: Delete old audio files to force regeneration with reassigned boundaries
+        # CRITICAL FIX: After global reassignment, segments are swapped in memory but
+        # old audio files from initial alignment remain on disk. We must delete them
+        # so that extract_session_audio_segments() generates fresh files from the
+        # reassigned segment boundaries.
         logger.info("")
-        logger.info("🎧 Extracting audio clips...")
+        logger.info("🗑️  Deleting old audio files to force regeneration...")
+        session_dir = self.audio_extractor.temp_dir / session_id
+        if session_dir.exists():
+            deleted_count = 0
+            for audio_file in session_dir.glob("term_*.wav"):
+                try:
+                    audio_file.unlink()
+                    deleted_count += 1
+                    logger.debug(f"   Deleted: {audio_file.name}")
+                except Exception as e:
+                    logger.warning(f"   Failed to delete {audio_file.name}: {e}")
+            
+            if deleted_count > 0:
+                logger.info(f"✓ Deleted {deleted_count} old audio files")
+            else:
+                logger.info("✓ No old audio files to delete (first run)")
+        else:
+            logger.info("✓ Session directory doesn't exist yet (first run)")
+        
+        # Stage 9: Extract audio files with verified boundaries
+        logger.info("")
+        logger.info("🎧 Extracting audio clips with reassigned boundaries...")
         session = self.session_manager.get_session(session_id)
         segment_paths = self.audio_extractor.extract_session_audio_segments(
             session, audio_data, sample_rate
@@ -462,8 +497,120 @@ class ProcessingController:
         logger.info(f"  ✗ No match found: {failures}")
         logger.info(f"  Total processed: {len(verified_pairs)}")
         logger.info("="*60)
+        logger.info("")
         
         return verified_pairs
+    
+    def _perform_global_reassignment(
+        self,
+        aligned_pairs: List[AlignedPair],
+        audio_data: np.ndarray,
+        sample_rate: int
+    ) -> List[AlignedPair]:
+        """
+        Perform global transcription-based reassignment with boundary refinement.
+        
+        Uses Hungarian algorithm to find optimal segment-to-term mapping,
+        then refines boundaries for any conflicts.
+        
+        Args:
+            aligned_pairs: Verified aligned pairs from speech recognition
+            audio_data: Full audio data array
+            sample_rate: Audio sample rate
+            
+        Returns:
+            Reassigned and refined aligned pairs
+        """
+        if not self.speech_verifier:
+            error_msg = (
+                "Speech verifier (Whisper) is required for global reassignment but is not available. "
+                "This is a critical dependency - without it, duplicate audio bugs cannot be detected and fixed."
+            )
+            logger.error(f"❌ {error_msg}")
+            raise RuntimeError(error_msg)
+        
+        logger.info("📍 CALL SITE: _perform_global_reassignment() in process_upload()")
+        logger.info(f"   - aligned_pairs: {len(aligned_pairs)} pairs")
+        logger.info(f"   - audio_data: {len(audio_data)} samples")
+        logger.info(f"   - sample_rate: {sample_rate} Hz")
+        
+        try:
+            # Build verification_results structure for global reassignment
+            logger.info("Building verification results for global reassignment...")
+            verification_results = {
+                'verified_pairs': []
+            }
+            
+            for i, pair in enumerate(aligned_pairs):
+                # Get transcription data for this pair
+                try:
+                    transcription = self.speech_verifier.transcribe_audio_segment(
+                        pair.audio_segment.audio_data, sample_rate
+                    )
+                    comparison = self.speech_verifier.compare_transcription_with_expected(
+                        transcription['text'], pair.vocabulary_entry.cantonese
+                    )
+                    
+                    verified_pair_data = {
+                        'pair_index': i,
+                        'english': pair.vocabulary_entry.english,
+                        'expected_cantonese': pair.vocabulary_entry.cantonese,
+                        'transcribed_cantonese': transcription['text'],
+                        'transcribed_jyutping': comparison.get('transcribed_jyutping', ''),
+                        'whisper_confidence': transcription['confidence'],
+                        'match_similarity': comparison['similarity'],
+                        'overall_confidence': pair.alignment_confidence
+                    }
+                    verification_results['verified_pairs'].append(verified_pair_data)
+                except Exception as e:
+                    logger.warning(f"Failed to get transcription for pair {i}: {e}")
+                    # Add placeholder data
+                    verified_pair_data = {
+                        'pair_index': i,
+                        'english': pair.vocabulary_entry.english,
+                        'expected_cantonese': pair.vocabulary_entry.cantonese,
+                        'transcribed_cantonese': '',
+                        'transcribed_jyutping': '',
+                        'whisper_confidence': 0.5,
+                        'match_similarity': 0.0,
+                        'overall_confidence': pair.alignment_confidence
+                    }
+                    verification_results['verified_pairs'].append(verified_pair_data)
+            
+            # Initialize and run global reassignment
+            logger.info("Initializing GlobalReassignmentCoordinator...")
+            reassignment_coordinator = GlobalReassignmentCoordinator(
+                speech_verifier=self.speech_verifier,
+                boundary_detector=self.boundary_detector
+            )
+            
+            logger.info("Calling perform_global_reassignment()...")
+            reassigned_pairs, reassignment_report = reassignment_coordinator.perform_global_reassignment(
+                aligned_pairs=aligned_pairs,
+                verification_results=verification_results,
+                audio_data=audio_data,
+                sample_rate=sample_rate,
+                enable_logging=True
+            )
+            
+            # Update aligned_pairs with reassigned pairs if successful
+            if reassignment_report['status'] == 'completed':
+                logger.info(f"✅ Global reassignment successful: {reassignment_report['reassignments']} segments reassigned")
+                if reassignment_report.get('boundary_conflicts_fixed'):
+                    logger.info(f"✅ Boundary conflicts were detected and fixed")
+                return reassigned_pairs
+            else:
+                # Don't fall back - raise an error so we know something went wrong
+                reason = reassignment_report.get('reason', 'unknown')
+                error_msg = f"Global reassignment failed: {reason}"
+                logger.error(f"❌ {error_msg}")
+                raise RuntimeError(error_msg)
+        
+        except Exception as e:
+            # Don't catch and suppress errors - let them propagate
+            logger.error(f"❌ Global reassignment failed: {e}")
+            logger.exception(e)
+            raise
     
     def _calculate_confidence_scores(
         self, aligned_pairs: List[AlignedPair], audio_data: np.ndarray, sample_rate: int

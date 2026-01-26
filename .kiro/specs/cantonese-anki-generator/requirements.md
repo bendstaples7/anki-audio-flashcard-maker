@@ -87,3 +87,18 @@ The Cantonese Anki Generator is an automated tool that transforms Google Docs co
 3. WHEN processing completes successfully, THE Cantonese_Anki_Generator SHALL confirm the number of cards created and audio clips generated
 4. THE Cantonese_Anki_Generator SHALL log processing steps for troubleshooting purposes
 5. WHEN validation fails, THE Cantonese_Anki_Generator SHALL specify which vocabulary terms or audio segments caused issues
+
+### Requirement 7
+
+**User Story:** As a user, I want the system to automatically correct misaligned audio segments, so that terms get matched to their correct audio even when initial segmentation produces shifted boundaries.
+
+#### Acceptance Criteria
+
+1. WHEN Whisper transcribes all audio segments, THE Cantonese_Anki_Generator SHALL compare each transcription against ALL expected vocabulary terms (not just the initially assigned term)
+2. WHEN a segment's transcription matches a different term better than its assigned term, THE Cantonese_Anki_Generator SHALL detect this mismatch
+3. WHEN multiple segments are misaligned, THE Cantonese_Anki_Generator SHALL use the Hungarian algorithm to find the globally optimal reassignment of segments to terms
+4. WHEN reassigning segments, THE Cantonese_Anki_Generator SHALL maximize the total similarity between transcriptions and expected terms across all assignments
+5. WHEN reassignment completes, THE Cantonese_Anki_Generator SHALL sort terms by their audio segment start times to maintain temporal order
+6. WHEN a segment contains silence or no speech, THE Cantonese_Anki_Generator SHALL assign it to the term with the lowest confidence match or mark it for manual review
+7. WHEN logging reassignments, THE Cantonese_Anki_Generator SHALL report which segments were moved, their similarity scores, and confidence improvements
+8. THE global reassignment SHALL handle any permutation of misalignments, not just adjacent swaps

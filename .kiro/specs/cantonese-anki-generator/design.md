@@ -44,6 +44,22 @@ The pipeline design allows for error recovery and validation at each stage, ensu
   - `perform_alignment()`: Executes forced alignment algorithm
   - `validate_alignment_quality()`: Checks alignment confidence scores
 
+### Global Transcription Reassignment Module
+- **Purpose**: Corrects misaligned segments by globally matching Whisper transcriptions to expected vocabulary terms
+- **Dependencies**: scipy (for Hungarian algorithm), existing Whisper transcription data
+- **Interface**: `reassign_segments_by_transcription(segments, vocabulary, transcriptions) -> List[AlignedPair]`
+- **Key Methods**:
+  - `build_similarity_matrix()`: Computes Jyutping similarity between all transcriptions and all expected terms
+  - `apply_hungarian_algorithm()`: Finds optimal one-to-one assignment maximizing total similarity
+  - `reassign_segments()`: Updates segment-to-term mappings based on optimal assignment
+  - `sort_by_temporal_order()`: Reorders terms by audio segment start times after reassignment
+- **Algorithm Details**:
+  - Creates NxN similarity matrix where N is the number of terms
+  - Each cell [i,j] contains weighted similarity: `jyutping_similarity(transcription_i, expected_term_j) * whisper_confidence_i`
+  - Uses `scipy.optimize.linear_sum_assignment()` to solve the assignment problem
+  - Handles empty transcriptions by assigning them to lowest-confidence matches
+  - Logs all reassignments with before/after mappings and similarity scores
+
 ### Anki Package Generator
 - **Purpose**: Creates .apkg files with cards and media
 - **Dependencies**: genanki library for Anki package creation
@@ -148,6 +164,10 @@ After analyzing all acceptance criteria, several properties can be consolidated 
 **Property 9: Progress tracking completeness**
 *For any* processing session, the system should provide progress indicators for all major steps and accurate completion summaries
 **Validates: Requirements 6.1, 6.3, 6.4**
+
+**Property 10: Global transcription-based reassignment correctness**
+*For any* set of Whisper transcriptions and expected vocabulary terms, the reassignment algorithm should produce a one-to-one mapping that maximizes the total similarity between transcriptions and terms, and no term should be assigned to a segment with lower similarity than an available alternative
+**Validates: Requirements 7.1, 7.2, 7.3, 7.4, 7.8**
 
 ## Error Handling
 

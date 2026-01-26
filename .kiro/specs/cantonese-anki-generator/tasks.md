@@ -265,3 +265,89 @@
 
 
   - Ensure all tests pass, ask the user if questions arise.
+
+- [x] 10. Implement global transcription-based segment reassignment
+  - [x] 10.1 Create similarity matrix builder
+    - Implement function to compute Jyutping similarity between all transcriptions and all expected terms
+    - Weight similarities by Whisper confidence scores
+    - Handle empty transcriptions and missing data gracefully
+    - _Requirements: 7.1, 7.2_
+
+  - [x] 10.2 Integrate Hungarian algorithm for optimal assignment
+    - Use scipy.optimize.linear_sum_assignment for assignment problem
+    - Negate similarity matrix for maximization (algorithm minimizes by default)
+    - Extract optimal segment-to-term mappings from algorithm output
+    - _Requirements: 7.3, 7.4_
+
+  - [x] 10.3 Implement segment reassignment logic
+    - Create new segment-term mappings based on optimal assignment
+    - Update confidence scores based on new similarity values
+    - Sort reassigned terms by audio segment start times to maintain temporal order
+    - Handle edge cases where no good match exists
+    - _Requirements: 7.4, 7.5, 7.6_
+
+  - [x] 10.4 Add comprehensive reassignment logging
+    - Log similarity matrix with top matches for each segment
+    - Report which segments were reassigned and why
+    - Show before/after mappings with similarity scores
+    - Display confidence improvements from reassignment
+    - _Requirements: 7.7_
+
+  - [ ]* 10.5 Write property test for global reassignment correctness
+    - **Property 10: Global transcription-based reassignment correctness**
+    - **Validates: Requirements 7.1, 7.2, 7.3, 7.4, 7.8**
+
+  - [ ]* 10.6 Write unit tests for reassignment module
+    - Test similarity matrix construction with various transcription qualities
+    - Test Hungarian algorithm integration and output correctness
+    - Test reassignment logic with known misalignment patterns
+    - Test temporal ordering after reassignment
+    - Test logging output completeness and accuracy
+    - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5, 7.6, 7.7, 7.8_
+
+  - [x] 10.7 Integrate reassignment into main alignment pipeline
+    - Call reassignment after initial Whisper verification completes
+    - Pass transcription data and expected terms to reassignment module
+    - Update aligned segments with reassigned mappings
+    - Ensure pipeline continues correctly with reassigned data
+    - _Requirements: 7.1, 7.3_
+
+- [x] 11. Fix silence detection and initial segmentation failures
+  - [x] 11.1 Fix auto-detection of leading silence in smart_segmentation.py
+    - Debug why "No speech detected in first 3.00s" is occurring
+    - Verify RMS calculation and threshold comparison logic is correct
+    - Ensure detected speech position is actually used as start_offset
+    - Add detailed logging of RMS values, thresholds, and detection points
+    - _Requirements: 4.1, 4.3_
+
+  - [x] 11.2 Revert contradictory parameter changes
+    - Revert speech_threshold from 0.10 back to 0.15 (original value)
+    - Revert minimum silence to skip from 0.4s back to 0.2s (original value)
+    - Document why these original values were correct
+    - _Requirements: 4.1, 4.3_
+
+  - [x] 11.3 Test and verify initial segmentation produces correct boundaries
+    - Upload test audio file and verify first segment starts at correct position (~1.79s, not 0.36s)
+    - Verify "Auto-detected X.XXs of leading silence" log shows correct value
+    - Verify Term 1 gets correct audio (not silence/noise)
+    - Verify all subsequent terms are correctly aligned
+    - _Requirements: 2.4, 4.1, 4.3_
+
+  - [x] 11.4 Improve post-reassignment validation logic
+    - Change validation to compare new assignment with original (not absolute threshold)
+    - Only revert to original if original was demonstrably better
+    - Add logging to explain why reversions occur
+    - _Requirements: 7.4, 7.5_
+
+  - [x] 11.5 Fix boundary refinement trigger condition
+    - Allow boundary refinement to run even when reassignments list is empty
+    - Boundary refinement should detect and fix silence/out-of-order segments independently
+    - Update condition from "if reassignments" to "if audio_data is not None"
+    - _Requirements: 7.6_
+
+  - [ ]* 11.6 Write integration test for silence detection fix
+    - Test with audio file that has leading silence
+    - Verify first segment starts after silence is skipped
+    - Verify all terms get correct audio segments
+    - Test that global reassignment accepts assignments (similarity > 0.3)
+    - _Requirements: 4.1, 4.3, 7.4_
