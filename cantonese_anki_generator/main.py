@@ -18,6 +18,7 @@ from .audio.loader import AudioLoader, AudioValidationError
 from .audio.smart_segmentation import SmartBoundaryDetector
 from .audio.speech_verification import AlignmentVerifier, SpeechVerificationError, WHISPER_AVAILABLE, WhisperVerifier
 from .audio.dynamic_alignment import DynamicAligner
+from .alignment.global_reassignment import GlobalReassignmentCoordinator
 from .models import AlignedPair
 from .anki import AnkiPackageGenerator, UniqueNamingManager
 from .errors import error_handler, ErrorCategory, ErrorSeverity, ProcessingError
@@ -728,6 +729,44 @@ def process_pipeline(google_doc_url: str, audio_file: Path, output_path: Path,
                 
                 progress_tracker.complete_stage(ProcessingStage.ALIGNMENT, success=True,
                                               details={'verification_confidence': alignment_quality['average_confidence']})
+                
+                # GLOBAL REASSIGNMENT: After Whisper verification completes
+                logger.info("\n" + "=" * 80)
+                logger.info("🌐 STARTING GLOBAL TRANSCRIPTION-BASED REASSIGNMENT")
+                logger.info("=" * 80)
+                
+                try:
+                    # Initialize global reassignment coordinator
+                    reassignment_coordinator = GlobalReassignmentCoordinator()
+                    
+                    # Perform global reassignment
+                    reassigned_pairs, reassignment_report = reassignment_coordinator.perform_global_reassignment(
+                        aligned_pairs=aligned_pairs,
+                        verification_results=verification_results,
+                        enable_logging=True
+                    )
+                    
+                    # Update aligned_pairs with reassigned pairs
+                    if reassignment_report['status'] == 'completed':
+                        logger.info(f"✅ Global reassignment successful: {reassignment_report['reassignments']} segments reassigned")
+                        aligned_pairs = reassigned_pairs
+                        
+                        # Update verification results with new confidence
+                        verification_results['overall_confidence'] = reassignment_report['quality_metrics']['average_similarity']
+                        verification_results['reassignment_performed'] = True
+                        verification_results['reassignment_report'] = reassignment_report
+                    else:
+                        logger.warning(f"⚠️  Global reassignment skipped: {reassignment_report.get('reason', 'unknown')}")
+                        verification_results['reassignment_performed'] = False
+                
+                except Exception as e:
+                    logger.error(f"❌ Global reassignment failed: {e}")
+                    logger.exception(e)
+                    verification_results['reassignment_performed'] = False
+                    verification_results['reassignment_error'] = str(e)
+                    # Continue with original aligned_pairs
+                
+                logger.info("=" * 80)
                 
             except SpeechVerificationError as e:
                 progress_tracker.log_warning(ProcessingStage.ALIGNMENT, f"Speech verification failed: {e}")

@@ -176,7 +176,6 @@ class SmartBoundaryDetector:
         original_start_offset = start_offset
         if start_offset == 0.0 and not force_start_offset:
             try:
-                # ENHANCED: More aggressive silence detection at the beginning
                 # Check first 3 seconds or 30% of audio (whichever is smaller)
                 check_duration = min(3.0, len(audio_data) / self.sample_rate * 0.3)
                 check_samples = int(check_duration * self.sample_rate)
@@ -186,12 +185,21 @@ class SmartBoundaryDetector:
                     overall_rms = np.sqrt(np.mean(audio_data ** 2))
                     
                     # Use smaller windows for more precise detection
-                    window_size = int(0.05 * self.sample_rate)  # 50ms windows (was 100ms)
-                    hop_size = int(0.02 * self.sample_rate)     # 20ms hop (was 50ms)
+                    window_size = int(0.05 * self.sample_rate)  # 50ms windows
+                    hop_size = int(0.02 * self.sample_rate)     # 20ms hop
                     
                     if window_size > 0 and hop_size > 0:
-                        # Scan from the beginning to find where speech actually starts
-                        speech_threshold = max(0.01, overall_rms * 0.15)  # More lenient threshold
+                        # Speech detection threshold
+                        # Use 20% of overall RMS (more conservative than 15%) to avoid false positives
+                        # from noise spikes, but ensure minimum of 0.015 for very quiet audio
+                        speech_threshold = max(0.015, overall_rms * 0.20)
+                        
+                        logger.debug(f"🔍 Scanning first {check_duration:.2f}s for leading silence...")
+                        logger.debug(f"   Overall RMS: {overall_rms:.4f}, Speech threshold: {speech_threshold:.4f}")
+                        
+                        detected_start = None
+                        consecutive_speech_windows = 0
+                        required_consecutive = 3  # Require 3 consecutive windows (60ms) to confirm speech
                         
                         for i in range(0, check_samples - window_size, hop_size):
                             window = audio_data[i:i + window_size]
@@ -199,19 +207,30 @@ class SmartBoundaryDetector:
                             
                             # Found speech when RMS exceeds threshold
                             if window_rms > speech_threshold:
-                                detected_start = i / self.sample_rate
+                                consecutive_speech_windows += 1
                                 
-                                # Only skip if we detected significant silence (at least 0.2s)
-                                if detected_start >= 0.2:
-                                    logger.info(f"🔍 Auto-detected {detected_start:.2f}s of silence at beginning")
-                                    logger.info(f"   Speech threshold: {speech_threshold:.4f}, Overall RMS: {overall_rms:.4f}")
-                                    start_offset = detected_start
-                                else:
-                                    logger.debug(f"Detected speech at {detected_start:.2f}s (too early to skip)")
-                                break
+                                # Confirm speech only after consecutive windows
+                                if consecutive_speech_windows >= required_consecutive:
+                                    # Use the start of the first window in the sequence
+                                    detected_start = (i - (consecutive_speech_windows - 1) * hop_size) / self.sample_rate
+                                    logger.debug(f"   Sustained speech detected at {detected_start:.2f}s (RMS: {window_rms:.4f})")
+                                    break
+                            else:
+                                # Reset counter if we hit silence
+                                consecutive_speech_windows = 0
                         
-                        # If we scanned the entire check region without finding speech, something is wrong
-                        if start_offset == 0.0:
+                        # If we found speech and it's after significant silence (>= 0.2s), skip to it
+                        # NOTE: 0.2s (200ms) is the correct threshold - it's long enough to indicate
+                        # intentional leading silence but not so long that we miss valid silence.
+                        # Higher values (0.4s) cause us to miss shorter leading silences.
+                        if detected_start is not None and detected_start >= 0.2:
+                            logger.info(f"🔍 Auto-detected {detected_start:.2f}s of leading silence")
+                            logger.info(f"   Speech threshold: {speech_threshold:.4f}, Overall RMS: {overall_rms:.4f}")
+                            logger.info(f"   Skipping to {detected_start:.2f}s where speech begins")
+                            start_offset = detected_start
+                        elif detected_start is not None:
+                            logger.debug(f"Detected speech at {detected_start:.2f}s (< 0.2s, not skipping)")
+                        else:
                             logger.warning(f"No speech detected in first {check_duration:.2f}s - audio may be very quiet or silent")
                             
             except Exception as e:
