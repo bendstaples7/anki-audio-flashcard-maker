@@ -136,14 +136,8 @@ def auth_status():
         try:
             authorization_url, state_token = authenticator.get_authorization_url()
             
-            # Store state token in app context for later validation
-            # In production, this should be stored in a more persistent way (Redis, database, etc.)
-            if not hasattr(current_app, 'oauth_states'):
-                current_app.oauth_states = {}
-            current_app.oauth_states[state_token] = {
-                'created_at': datetime.now(),
-                'authenticator': authenticator
-            }
+            # State token is now stored in file-based storage by the authenticator
+            # This is shared across worker processes and survives server restarts
             
             return jsonify({
                 'authenticated': False,
@@ -237,25 +231,7 @@ def auth_callback():
             )
             return jsonify(response), 400
         
-        # Retrieve stored state from app context
-        if not hasattr(current_app, 'oauth_states') or state not in current_app.oauth_states:
-            logger.error(f"Invalid or expired state token: {state}")
-            return invalid_state_response(expired=False)
-        
-        # Get authenticator from stored state
-        state_data = current_app.oauth_states[state]
-        
-        # Check state expiration (10 minutes)
-        created_at = state_data.get('created_at')
-        if created_at:
-            age = datetime.now() - created_at
-            if age.total_seconds() > 600:  # 10 minutes
-                logger.error(f"Expired state token: {state}")
-                # Clean up expired state
-                del current_app.oauth_states[state]
-                return invalid_state_response(expired=True)
-        
-        # Initialize authenticator for token exchange
+        # Initialize authenticator for token exchange and state validation
         try:
             authenticator = GoogleDocsAuthenticator(mode='web')
         except Exception as e:
@@ -270,15 +246,11 @@ def auth_callback():
             )
             return jsonify(response), 500
         
-        # Set the OAuth state in the authenticator for validation
-        from cantonese_anki_generator.config import Config
-        redirect_uri = Config.OAUTH_REDIRECT_URI
-        
-        authenticator._oauth_state = {
-            'token': state,
-            'created_at': created_at,
-            'redirect_uri': redirect_uri
-        }
+        # Validate state token using file-based storage
+        # This works across worker processes and server restarts
+        if not authenticator._validate_state(state):
+            logger.error(f"Invalid or expired state token: {state}")
+            return invalid_state_response(expired=False)
         
         # Exchange authorization code for tokens
         try:
@@ -292,9 +264,7 @@ def auth_callback():
                 logger.error("Token exchange failed")
                 return token_exchange_failed_response()
             
-            # Clean up state token after successful exchange
-            if state in current_app.oauth_states:
-                del current_app.oauth_states[state]
+            # State token is automatically cleaned up by the authenticator after successful exchange
             
             logger.info("OAuth authentication successful")
             
@@ -469,13 +439,8 @@ def validate_google_url(url: str) -> Tuple[bool, Optional[str], Optional[str], O
             try:
                 authorization_url, state_token = authenticator.get_authorization_url()
                 
-                # Store state token in app context for later validation
-                if not hasattr(current_app, 'oauth_states'):
-                    current_app.oauth_states = {}
-                current_app.oauth_states[state_token] = {
-                    'created_at': datetime.now(),
-                    'authenticator': authenticator
-                }
+                # State token is stored in file-based storage by the authenticator
+                # This is shared across worker processes
                 
                 error_message = (
                     "Authentication required to access Google Docs/Sheets. "
@@ -504,12 +469,7 @@ def validate_google_url(url: str) -> Tuple[bool, Optional[str], Optional[str], O
             try:
                 authorization_url, state_token = authenticator.get_authorization_url()
                 
-                if not hasattr(current_app, 'oauth_states'):
-                    current_app.oauth_states = {}
-                current_app.oauth_states[state_token] = {
-                    'created_at': datetime.now(),
-                    'authenticator': authenticator
-                }
+                # State token is stored in file-based storage by the authenticator
                 
                 error_message = (
                     "Authentication failed. Your session may have expired. "
@@ -547,12 +507,7 @@ def validate_google_url(url: str) -> Tuple[bool, Optional[str], Optional[str], O
                 authenticator = GoogleDocsAuthenticator(mode='web')
                 authorization_url, state_token = authenticator.get_authorization_url()
                 
-                if not hasattr(current_app, 'oauth_states'):
-                    current_app.oauth_states = {}
-                current_app.oauth_states[state_token] = {
-                    'created_at': datetime.now(),
-                    'authenticator': authenticator
-                }
+                # State token is stored in file-based storage by the authenticator
                 
                 error_message = (
                     "Authentication expired or invalid. "
@@ -1183,13 +1138,7 @@ def process_files():
                 try:
                     authorization_url, state_token = authenticator.get_authorization_url()
                     
-                    # Store state token in app context for later validation
-                    if not hasattr(current_app, 'oauth_states'):
-                        current_app.oauth_states = {}
-                    current_app.oauth_states[state_token] = {
-                        'created_at': datetime.now(),
-                        'authenticator': authenticator
-                    }
+                    # State token is stored in file-based storage by the authenticator
                     
                     error_message = (
                         "Authentication required to process Google Docs/Sheets. "
@@ -1285,12 +1234,7 @@ def process_files():
                     authenticator = GoogleDocsAuthenticator(mode='web')
                     authorization_url, state_token = authenticator.get_authorization_url()
                     
-                    if not hasattr(current_app, 'oauth_states'):
-                        current_app.oauth_states = {}
-                    current_app.oauth_states[state_token] = {
-                        'created_at': datetime.now(),
-                        'authenticator': authenticator
-                    }
+                    # State token is stored in file-based storage by the authenticator
                     
                     error_message = (
                         "Authentication expired during processing. "

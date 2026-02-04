@@ -78,7 +78,7 @@ The Cantonese Anki Generator is an automated tool that transforms Google Docs co
 
 ### Requirement 6
 
-**User Story:** As a user, I want clear feedback during pro1720 cessing, so that I understand the system's progress and can identify any issues.
+**User Story:** As a user, I want clear feedback during processing, so that I understand the system's progress and can identify any issues.
 
 #### Acceptance Criteria
 

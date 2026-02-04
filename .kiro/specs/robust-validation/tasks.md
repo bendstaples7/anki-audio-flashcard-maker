@@ -1,4 +1,4 @@
-"G:\My Drive\Language Learning\iTalki\Zack\Dec 20 Ben S.m4a"# Implementation Plan
+# Implementation Plan
 
 - [x] 1. Set up validation system core infrastructure
 

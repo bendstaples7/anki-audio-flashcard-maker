@@ -260,7 +260,7 @@ function showAuthenticationBanner(authUrl) {
                     <strong>Authentication Required</strong>
                     <p>You need to authenticate with Google to access Docs and Sheets.</p>
                 </div>
-                <a href="${authUrl}" class="btn btn-primary auth-btn" target="_blank">
+                <a href="${authUrl}" class="btn btn-primary auth-btn" target="_blank" rel="noopener noreferrer">
                     <span class="btn-icon">🔑</span> Authenticate with Google
                 </a>
                 <button class="auth-banner-close" onclick="this.parentElement.parentElement.remove()">×</button>
@@ -288,17 +288,11 @@ function handleAuthenticationError(errorData) {
     if (errorData.error_code === 'AUTHENTICATION_REQUIRED' && errorData.authorization_url) {
         showAuthenticationBanner(errorData.authorization_url);
         
-        // Show error message with link
-        const message = `
-            <div>
-                ${errorData.error || 'Authentication required'}
-                <br><br>
-                <a href="${errorData.authorization_url}" target="_blank" style="color: #3498db; text-decoration: underline;">
-                    Click here to authenticate with Google
-                </a>
-            </div>
-        `;
-        showError(message, { autoHide: false });
+        // Show simple error message (banner already has the link)
+        showError(
+            errorData.error || 'Authentication required. Please use the banner above to authenticate.',
+            { autoHide: false }
+        );
     } else {
         showError(errorData.error || 'Authentication failed', { autoHide: false });
     }

@@ -32,14 +32,14 @@ class TestURLValidation:
         url = "https://docs.google.com/document/d/1234567890abcdef"
         # Note: This will fail accessibility check without real credentials
         # but should pass format validation
-        is_valid, error, doc_type, auth_url = validate_google_url(url)
+        is_valid, error, doc_type, _ = validate_google_url(url)
         # Format is valid even if accessibility fails
         assert doc_type == 'docs' or error is not None
     
     def test_valid_google_sheets_url_format(self):
         """Test that valid Google Sheets URL format is recognized."""
         url = "https://docs.google.com/spreadsheets/d/1234567890abcdef"
-        is_valid, error, doc_type, auth_url = validate_google_url(url)
+        is_valid, error, doc_type, _ = validate_google_url(url)
         assert doc_type == 'sheets' or error is not None
     
     def test_invalid_url_format(self):
@@ -53,14 +53,14 @@ class TestURLValidation:
     
     def test_empty_url(self):
         """Test that empty URL is rejected."""
-        is_valid, error, doc_type, auth_url = validate_google_url("")
+        is_valid, error, _, auth_url = validate_google_url("")
         assert not is_valid
         assert "URL is required" in error
         assert auth_url is None
 
     def test_none_url(self):
         """Test that None URL is rejected."""
-        is_valid, error, doc_type, auth_url = validate_google_url(None)
+        is_valid, error, _, auth_url = validate_google_url(None)
         assert not is_valid
         assert "URL is required" in error
         assert auth_url is None

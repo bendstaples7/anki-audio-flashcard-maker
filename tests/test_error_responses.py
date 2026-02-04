@@ -114,7 +114,7 @@ class TestAuthenticationErrorResponses:
         """Test authentication required with custom message."""
         with self.app.app_context():
             custom_msg = "Custom auth message"
-            response, status_code = authentication_required_response(
+            response, _ = authentication_required_response(
                 message=custom_msg,
                 authorization_url="https://test.com/auth"
             )

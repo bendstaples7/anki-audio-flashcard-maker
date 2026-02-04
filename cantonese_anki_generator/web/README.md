@@ -12,7 +12,7 @@ For detailed authentication setup, troubleshooting, and configuration instructio
 Quick setup:
 1. Create OAuth credentials in Google Cloud Console
 2. Download `credentials.json` to project root
-3. Configure callback URL: `http://localhost:5000/api/auth/callback`
+3. Configure callback URL: `http://localhost:3000/api/auth/callback`
 4. Start the application and follow authentication prompts
 
 ## Directory Structure

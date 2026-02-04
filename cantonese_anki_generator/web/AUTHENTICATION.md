@@ -77,12 +77,12 @@ The Cantonese Anki Generator web application uses Google OAuth 2.0 to access Goo
 The OAuth callback URL is where Google redirects users after they authorize your application.
 
 **Development Environment:**
-```
+```text
 http://localhost:3000/api/auth/callback
 ```
 
 **Production Environment:**
-```
+```text
 https://yourdomain.com/api/auth/callback
 ```
 
@@ -179,7 +179,7 @@ The application includes proactive token management:
 }
 ```
 
-**Using the Status Endpoint
+**Using the Status Endpoint**
 
 **JavaScript Example:**
 ```javascript
@@ -426,6 +426,34 @@ python -c "import json; print(json.load(open('credentials.json')))"
    - Alert on repeated failures
    - Track token refresh patterns
 
+4. **Multi-Worker Deployments**
+   
+   When running with multiple workers (Gunicorn, uWSGI, etc.):
+   
+   **Background Token Monitor:**
+   - Set `RUN_TOKEN_MONITOR=false` on all workers EXCEPT one
+   - Only ONE worker should run the background token monitor
+   - This prevents race conditions on `token.json`
+   
+   Example Gunicorn configuration:
+   ```bash
+   # Worker 1 (with token monitor)
+   RUN_TOKEN_MONITOR=true gunicorn -w 1 -b 0.0.0.0:3000 "cantonese_anki_generator.web.app:create_app()"
+   
+   # Workers 2-4 (without token monitor)
+   RUN_TOKEN_MONITOR=false gunicorn -w 3 -b 0.0.0.0:3001 "cantonese_anki_generator.web.app:create_app()"
+   ```
+   
+   **File Locking:**
+   - Token file operations use file locking to prevent corruption
+   - Thread-safe locks prevent race conditions within a process
+   - File locks (fcntl on Unix/Linux) prevent race conditions across processes
+   - On Windows, only thread-level locking is available
+   
+   **Alternative: Single Worker with Sticky Sessions:**
+   - Run with a single worker: `gunicorn -w 1`
+   - Or use sticky sessions to route users to the same worker
+
 ## CLI Mode Compatibility
 
 The authentication system supports both web and CLI modes:
@@ -469,8 +497,8 @@ Modify token refresh timing in `config.py`:
 # Refresh tokens this many hours before expiration
 TOKEN_REFRESH_THRESHOLD_HOURS = 24
 
-# Background monitor check interval
-TOKEN_MONITOR_INTERVAL_HOURS = 6
+# Background monitor check interval (hours between token health checks)
+BACKGROUND_MONITOR_INTERVAL_HOURS = 6
 ```
 
 ### Custom OAuth Scopes
@@ -487,14 +515,38 @@ SCOPES = [
 
 ### Custom Redirect URI
 
-Override the default redirect URI:
+**Using Environment Variable (Recommended for Production):**
+
+Set the `OAUTH_REDIRECT_URI` environment variable:
+
+```bash
+# Linux/Mac
+export OAUTH_REDIRECT_URI='https://yourdomain.com/api/auth/callback'
+
+# Windows (Command Prompt)
+set OAUTH_REDIRECT_URI=https://yourdomain.com/api/auth/callback
+
+# Windows (PowerShell)
+$env:OAUTH_REDIRECT_URI='https://yourdomain.com/api/auth/callback'
+
+# Docker
+docker run -e OAUTH_REDIRECT_URI='https://yourdomain.com/api/auth/callback' ...
+
+# Docker Compose
+environment:
+  - OAUTH_REDIRECT_URI=https://yourdomain.com/api/auth/callback
+```
+
+**Modifying config.py (Alternative):**
+
+Override the default redirect URI directly in code:
 
 ```python
 # In config.py
 OAUTH_REDIRECT_URI = 'http://localhost:8080/api/auth/callback'
 ```
 
-Remember to update Google Cloud Console with the new URI.
+**Important:** Remember to update Google Cloud Console with the new URI in both cases.
 
 ## FAQ
 

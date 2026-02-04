@@ -86,13 +86,21 @@ def initialize_authentication(app):
                 else:
                     logger.warning("   Proactive refresh failed - will retry later")
         
-        # Start background token monitor
-        logger.info("Starting background token monitor...")
-        token_monitor = TokenMonitor(authenticator, check_interval_hours=6)
-        token_monitor.start()
-        
-        # Store monitor in app config for cleanup on shutdown
-        app.config['TOKEN_MONITOR'] = token_monitor
+        # Start background token monitor only if enabled
+        # In multi-worker deployments, set RUN_TOKEN_MONITOR=true on only ONE worker
+        # to prevent multiple monitors from running and causing race conditions
+        if os.environ.get('RUN_TOKEN_MONITOR', 'true').lower() == 'true':
+            logger.info("Starting background token monitor...")
+            token_monitor = TokenMonitor(authenticator, check_interval_hours=6)
+            token_monitor.start()
+            
+            # Store monitor in app config for cleanup on shutdown
+            app.config['TOKEN_MONITOR'] = token_monitor
+            
+            logger.info("✓ Background token monitor started")
+        else:
+            logger.info("⚠️  Background token monitor disabled (RUN_TOKEN_MONITOR=false)")
+            logger.info("   Token refresh will only occur on-demand during requests")
         
         logger.info("✓ Authentication system initialized successfully")
         
@@ -129,7 +137,10 @@ def create_app():
     os.makedirs(app.config['SESSION_FOLDER'], exist_ok=True)
     
     # Initialize authentication system
-    initialize_authentication(app)
+    # Only initialize in the reloader child process (or when not using reloader)
+    # This prevents duplicate TokenMonitor instances in debug mode
+    if os.environ.get('WERKZEUG_RUN_MAIN') or not os.environ.get('FLASK_DEBUG'):
+        initialize_authentication(app)
     
     # Clear old sessions and uploads on startup to prevent stale data
     # Only do this in the main process, not the reloader process

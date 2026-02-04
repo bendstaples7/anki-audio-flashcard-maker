@@ -7,9 +7,17 @@ Handles OAuth2 flow, token management, and API client creation for Google Docs a
 import os
 import json
 import secrets
+import threading
 from pathlib import Path
 from typing import Optional, Tuple, Dict, Any
 from datetime import datetime, timedelta
+
+# fcntl is only available on Unix/Linux systems
+try:
+    import fcntl
+    HAS_FCNTL = True
+except ImportError:
+    HAS_FCNTL = False
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -18,6 +26,10 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
 from ..config import Config
+
+
+# Module-level lock for token file operations (thread-safe)
+_token_file_lock = threading.Lock()
 
 
 class GoogleDocsAuthenticator:
@@ -50,8 +62,8 @@ class GoogleDocsAuthenticator:
         self._mode_param = mode
         self._detected_mode = self.detect_mode() if mode == 'auto' else mode
         
-        # State token storage for CSRF protection
-        self._oauth_state: Optional[Dict[str, Any]] = None
+        # State token storage path for CSRF protection (file-based for multi-worker support)
+        self._state_storage_path = Path(self.token_path).parent / '.oauth_states.json'
     
     def detect_mode(self) -> str:
         """
@@ -85,11 +97,8 @@ class GoogleDocsAuthenticator:
             True if authentication successful, False otherwise
         """
         try:
-            # Load existing token if available
-            if os.path.exists(self.token_path):
-                self._credentials = Credentials.from_authorized_user_file(
-                    self.token_path, self.scopes
-                )
+            # Load existing token if available (with file locking)
+            self._credentials = self._load_token()
             
             # If there are no valid credentials, request authorization
             if not self._credentials or not self._credentials.valid:
@@ -166,12 +175,8 @@ class GoogleDocsAuthenticator:
         # Generate state token for CSRF protection
         state_token = secrets.token_urlsafe(32)
         
-        # Store state with expiration
-        self._oauth_state = {
-            'token': state_token,
-            'created_at': datetime.now(),
-            'redirect_uri': redirect_uri
-        }
+        # Store state with expiration in file-based storage
+        self._store_state(state_token, redirect_uri)
         
         # Check if credentials are for web or installed app
         with open(self.credentials_path, 'r') as f:
@@ -260,14 +265,111 @@ class GoogleDocsAuthenticator:
             # Save tokens
             self._save_token()
             
-            # Clear state
-            self._oauth_state = None
+            # Clear state from storage
+            self._remove_state(state)
             
             return True
             
         except Exception as e:
             print(f"Token exchange failed: {e}")
             return False
+    
+    def _store_state(self, state_token: str, redirect_uri: str) -> None:
+        """
+        Store OAuth state token in file-based storage.
+        
+        Args:
+            state_token: The state token to store
+            redirect_uri: The redirect URI associated with this state
+        """
+        try:
+            # Load existing states
+            states = self._load_states()
+            
+            # Clean up expired states (older than 10 minutes)
+            self._cleanup_expired_states(states)
+            
+            # Add new state
+            states[state_token] = {
+                'created_at': datetime.now().isoformat(),
+                'redirect_uri': redirect_uri
+            }
+            
+            # Save to file
+            self._save_states(states)
+            
+        except Exception as e:
+            print(f"Warning: Failed to store state token: {e}")
+    
+    def _remove_state(self, state_token: str) -> None:
+        """
+        Remove OAuth state token from storage.
+        
+        Args:
+            state_token: The state token to remove
+        """
+        try:
+            states = self._load_states()
+            if state_token in states:
+                del states[state_token]
+                self._save_states(states)
+        except Exception as e:
+            print(f"Warning: Failed to remove state token: {e}")
+    
+    def _load_states(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Load all OAuth states from file storage.
+        
+        Returns:
+            Dictionary of state tokens to state data
+        """
+        if not self._state_storage_path.exists():
+            return {}
+        
+        try:
+            with open(self._state_storage_path, 'r') as f:
+                return json.load(f)
+        except (json.JSONDecodeError, IOError):
+            return {}
+    
+    def _save_states(self, states: Dict[str, Dict[str, Any]]) -> None:
+        """
+        Save OAuth states to file storage.
+        
+        Args:
+            states: Dictionary of state tokens to state data
+        """
+        try:
+            # Ensure parent directory exists
+            self._state_storage_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            with open(self._state_storage_path, 'w') as f:
+                json.dump(states, f, indent=2)
+        except IOError as e:
+            print(f"Warning: Failed to save state tokens: {e}")
+    
+    def _cleanup_expired_states(self, states: Dict[str, Dict[str, Any]]) -> None:
+        """
+        Remove expired state tokens from the states dictionary.
+        
+        Args:
+            states: Dictionary of state tokens to clean up (modified in place)
+        """
+        now = datetime.now()
+        expired_tokens = []
+        
+        for token, data in states.items():
+            try:
+                created_at = datetime.fromisoformat(data['created_at'])
+                age = now - created_at
+                if age.total_seconds() > Config.STATE_TOKEN_EXPIRATION_MINUTES * 60:
+                    expired_tokens.append(token)
+            except (KeyError, ValueError):
+                # Invalid data, mark for removal
+                expired_tokens.append(token)
+        
+        for token in expired_tokens:
+            del states[token]
     
     def _validate_state(self, state: str) -> bool:
         """
@@ -279,20 +381,27 @@ class GoogleDocsAuthenticator:
         Returns:
             True if valid, False otherwise
         """
-        if not self._oauth_state:
+        try:
+            states = self._load_states()
+            
+            if state not in states:
+                return False
+            
+            state_data = states[state]
+            
+            # Check expiration
+            created_at = datetime.fromisoformat(state_data['created_at'])
+            age = datetime.now() - created_at
+            if age.total_seconds() > Config.STATE_TOKEN_EXPIRATION_MINUTES * 60:
+                # Clean up expired state
+                self._remove_state(state)
+                return False
+            
+            return True
+            
+        except Exception as e:
+            print(f"State validation error: {e}")
             return False
-        
-        # Check token match
-        if self._oauth_state['token'] != state:
-            return False
-        
-        # Check expiration (10 minutes)
-        created_at = self._oauth_state['created_at']
-        age = datetime.now() - created_at
-        if age.total_seconds() > 600:  # 10 minutes
-            return False
-        
-        return True
     
     def refresh_tokens(self) -> bool:
         """
@@ -303,12 +412,9 @@ class GoogleDocsAuthenticator:
         """
         try:
             if not self._credentials:
-                # Try to load from file
-                if os.path.exists(self.token_path):
-                    self._credentials = Credentials.from_authorized_user_file(
-                        self.token_path, self.scopes
-                    )
-                else:
+                # Try to load from file (with file locking)
+                self._credentials = self._load_token()
+                if not self._credentials:
                     return False
             
             if not self._credentials.refresh_token:
@@ -338,16 +444,10 @@ class GoogleDocsAuthenticator:
             True if expiring soon or already expired, False otherwise
         """
         if not self._credentials:
-            # Try to load from file
-            if os.path.exists(self.token_path):
-                try:
-                    self._credentials = Credentials.from_authorized_user_file(
-                        self.token_path, self.scopes
-                    )
-                except Exception:
-                    return True  # Consider as expiring if can't load
-            else:
-                return True  # No token file
+            # Try to load from file (with file locking)
+            self._credentials = self._load_token()
+            if not self._credentials:
+                return True  # No token file or failed to load
         
         if not self._credentials.expiry:
             return False  # No expiry means token doesn't expire
@@ -375,14 +475,9 @@ class GoogleDocsAuthenticator:
             'has_refresh_token': False
         }
         
-        # Try to load credentials if not already loaded
-        if not self._credentials and os.path.exists(self.token_path):
-            try:
-                self._credentials = Credentials.from_authorized_user_file(
-                    self.token_path, self.scopes
-                )
-            except Exception:
-                return status
+        # Try to load credentials if not already loaded (with file locking)
+        if not self._credentials:
+            self._credentials = self._load_token()
         
         if not self._credentials:
             return status
@@ -401,10 +496,53 @@ class GoogleDocsAuthenticator:
         return status
     
     def _save_token(self) -> None:
-        """Save the current credentials to token file."""
+        """Save the current credentials to token file with file locking."""
         if self._credentials:
-            with open(self.token_path, 'w') as token_file:
-                token_file.write(self._credentials.to_json())
+            with _token_file_lock:
+                # Use file locking to prevent race conditions across processes
+                with open(self.token_path, 'w') as token_file:
+                    # Acquire exclusive lock (works across processes on Unix/Linux)
+                    if HAS_FCNTL:
+                        try:
+                            fcntl.flock(token_file.fileno(), fcntl.LOCK_EX)
+                            token_file.write(self._credentials.to_json())
+                            fcntl.flock(token_file.fileno(), fcntl.LOCK_UN)
+                        except OSError:
+                            # File locking failed, write anyway with thread lock
+                            token_file.write(self._credentials.to_json())
+                    else:
+                        # fcntl not available on Windows, use thread lock only
+                        token_file.write(self._credentials.to_json())
+    
+    def _load_token(self) -> Optional[Credentials]:
+        """Load credentials from token file with file locking."""
+        if not os.path.exists(self.token_path):
+            return None
+        
+        with _token_file_lock:
+            try:
+                # Use file locking to prevent race conditions across processes
+                if HAS_FCNTL:
+                    with open(self.token_path, 'r') as token_file:
+                        try:
+                            fcntl.flock(token_file.fileno(), fcntl.LOCK_SH)
+                            creds = Credentials.from_authorized_user_file(
+                                self.token_path, self.scopes
+                            )
+                            fcntl.flock(token_file.fileno(), fcntl.LOCK_UN)
+                            return creds
+                        except OSError:
+                            # File locking failed, load anyway with thread lock
+                            return Credentials.from_authorized_user_file(
+                                self.token_path, self.scopes
+                            )
+                else:
+                    # fcntl not available on Windows, use thread lock only
+                    return Credentials.from_authorized_user_file(
+                        self.token_path, self.scopes
+                    )
+            except Exception:
+                return None
     
     def get_docs_service(self):
         """

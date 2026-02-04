@@ -192,7 +192,7 @@ class TestCLIAuthentication:
             mode='cli'
         )
         
-        with patch('google.auth.transport.requests.Request') as mock_request:
+        with patch('google.auth.transport.requests.Request'):
             with patch.object(Credentials, 'refresh') as mock_refresh:
                 result = auth.authenticate()
                 

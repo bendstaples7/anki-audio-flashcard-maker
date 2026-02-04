@@ -28,8 +28,17 @@ class Config:
     TOKEN_FILE = "token.json"
     
     # Web authentication settings
-    OAUTH_REDIRECT_URI = "http://localhost:3000/api/auth/callback"
-    """OAuth redirect URI for web-based authentication flow."""
+    OAUTH_REDIRECT_URI = os.environ.get(
+        'OAUTH_REDIRECT_URI',
+        'http://localhost:3000/api/auth/callback'
+    )
+    """
+    OAuth redirect URI for web-based authentication flow.
+    
+    Can be configured via OAUTH_REDIRECT_URI environment variable.
+    Default: http://localhost:3000/api/auth/callback (development)
+    Production example: https://yourdomain.com/api/auth/callback
+    """
     
     TOKEN_REFRESH_THRESHOLD_HOURS = 24
     """Threshold in hours before token expiration to trigger proactive refresh."""

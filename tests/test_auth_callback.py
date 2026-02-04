@@ -34,25 +34,22 @@ class TestAuthCallback:
             # Mock successful token exchange
             mock_auth.exchange_code_for_tokens.return_value = True
             
-            # Set up OAuth state in app context
-            with app.app_context():
-                from flask import current_app
-                current_app.oauth_states = {
-                    'test_state_token': {
-                        'created_at': datetime.now(),
-                        'authenticator': mock_auth
-                    }
-                }
-                
-                # Make request with valid code and state
-                response = client.get('/api/auth/callback?code=test_code&state=test_state_token')
+            # Mock state validation (file-based storage)
+            mock_auth._validate_state.return_value = True
+            
+            # Make request with valid code and state
+            response = client.get('/api/auth/callback?code=test_code&state=test_state_token')
             
             assert response.status_code == 200
-            data = response.get_json()
             
-            assert data['success'] is True
-            assert 'Authentication successful' in data['message']
-            assert data['redirect_url'] == '/'
+            # Success response is HTML, not JSON
+            assert response.content_type == 'text/html; charset=utf-8'
+            html_content = response.get_data(as_text=True)
+            
+            # Verify HTML contains success message
+            assert 'Authentication Successful' in html_content
+            assert 'You can now use Google Docs and Sheets' in html_content
+            assert "window.location.href = '/'" in html_content  # Auto-redirect script
             
             # Verify token exchange was called
             mock_auth.exchange_code_for_tokens.assert_called_once()
@@ -81,14 +78,12 @@ class TestAuthCallback:
     
     def test_callback_invalid_state(self, client, app):
         """Test callback with invalid state token (CSRF protection)."""
-        with app.app_context():
-            from flask import current_app
-            # Set up OAuth state with different token
-            current_app.oauth_states = {
-                'valid_state': {
-                    'created_at': datetime.now()
-                }
-            }
+        with patch('cantonese_anki_generator.web.api.GoogleDocsAuthenticator') as mock_auth_class:
+            mock_auth = MagicMock()
+            mock_auth_class.return_value = mock_auth
+            
+            # Mock invalid state validation (file-based storage returns False)
+            mock_auth._validate_state.return_value = False
             
             # Make request with invalid state
             response = client.get('/api/auth/callback?code=test_code&state=invalid_state')
@@ -117,18 +112,11 @@ class TestAuthCallback:
             mock_auth = MagicMock()
             mock_auth_class.return_value = mock_auth
             
-            # Mock failed token exchange
+            # Mock valid state but failed token exchange
+            mock_auth._validate_state.return_value = True
             mock_auth.exchange_code_for_tokens.return_value = False
             
-            with app.app_context():
-                from flask import current_app
-                current_app.oauth_states = {
-                    'test_state': {
-                        'created_at': datetime.now()
-                    }
-                }
-                
-                response = client.get('/api/auth/callback?code=test_code&state=test_state')
+            response = client.get('/api/auth/callback?code=test_code&state=test_state')
             
             assert response.status_code == 500
             data = response.get_json()
@@ -143,18 +131,11 @@ class TestAuthCallback:
             mock_auth = MagicMock()
             mock_auth_class.return_value = mock_auth
             
-            # Mock state validation error
+            # Mock valid state but token exchange raises ValueError
+            mock_auth._validate_state.return_value = True
             mock_auth.exchange_code_for_tokens.side_effect = ValueError("Invalid state token")
             
-            with app.app_context():
-                from flask import current_app
-                current_app.oauth_states = {
-                    'test_state': {
-                        'created_at': datetime.now()
-                    }
-                }
-                
-                response = client.get('/api/auth/callback?code=test_code&state=test_state')
+            response = client.get('/api/auth/callback?code=test_code&state=test_state')
             
             assert response.status_code == 400
             data = response.get_json()
@@ -168,18 +149,11 @@ class TestAuthCallback:
             mock_auth = MagicMock()
             mock_auth_class.return_value = mock_auth
             
-            # Mock credentials file not found error
+            # Mock valid state but credentials file not found error
+            mock_auth._validate_state.return_value = True
             mock_auth.exchange_code_for_tokens.side_effect = FileNotFoundError("Credentials not found")
             
-            with app.app_context():
-                from flask import current_app
-                current_app.oauth_states = {
-                    'test_state': {
-                        'created_at': datetime.now()
-                    }
-                }
-                
-                response = client.get('/api/auth/callback?code=test_code&state=test_state')
+            response = client.get('/api/auth/callback?code=test_code&state=test_state')
             
             assert response.status_code == 500
             data = response.get_json()

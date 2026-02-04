@@ -1326,10 +1326,10 @@ section h2 {
     border-radius: 8px;
     margin-bottom: 30px;
     box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-    animation: slideDown 0.3s ease-out;
+    animation: slideDownDeep 0.3s ease-out;
 }
 
-@keyframes slideDown {
+@keyframes slideDownDeep {
     from {
         opacity: 0;
         transform: translateY(-20px);

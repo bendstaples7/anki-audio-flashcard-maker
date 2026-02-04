@@ -6,7 +6,7 @@ The Cantonese Anki Generator web application currently fails when OAuth tokens e
 
 ## Glossary
 
-- **OAuth_Token**: A time-limited credential that grants access to Google APIs, typically expires after 7 days
+- **OAuth_Token**: A time-limited credential (access token) that grants access to Google APIs, expires after 1 hour (3600 seconds). Note: Refresh tokens are long-lived and used to obtain new access tokens.
 - **Refresh_Token**: A long-lived credential used to obtain new OAuth tokens without user interaction
 - **Authentication_Flow**: The process of obtaining user authorization to access Google APIs
 - **Web_Application**: The Flask-based web server that provides the manual audio alignment interface
