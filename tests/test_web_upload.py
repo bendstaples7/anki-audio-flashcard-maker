@@ -32,35 +32,38 @@ class TestURLValidation:
         url = "https://docs.google.com/document/d/1234567890abcdef"
         # Note: This will fail accessibility check without real credentials
         # but should pass format validation
-        is_valid, error, doc_type = validate_google_url(url)
+        is_valid, error, doc_type, auth_url = validate_google_url(url)
         # Format is valid even if accessibility fails
         assert doc_type == 'docs' or error is not None
     
     def test_valid_google_sheets_url_format(self):
         """Test that valid Google Sheets URL format is recognized."""
         url = "https://docs.google.com/spreadsheets/d/1234567890abcdef"
-        is_valid, error, doc_type = validate_google_url(url)
+        is_valid, error, doc_type, auth_url = validate_google_url(url)
         assert doc_type == 'sheets' or error is not None
     
     def test_invalid_url_format(self):
         """Test that invalid URL format is rejected."""
         url = "https://example.com/document"
-        is_valid, error, doc_type = validate_google_url(url)
+        is_valid, error, doc_type, auth_url = validate_google_url(url)
         assert not is_valid
         assert "Invalid URL format" in error
         assert doc_type is None
+        assert auth_url is None
     
     def test_empty_url(self):
         """Test that empty URL is rejected."""
-        is_valid, error, doc_type = validate_google_url("")
+        is_valid, error, doc_type, auth_url = validate_google_url("")
         assert not is_valid
         assert "URL is required" in error
+        assert auth_url is None
 
     def test_none_url(self):
         """Test that None URL is rejected."""
-        is_valid, error, doc_type = validate_google_url(None)
+        is_valid, error, doc_type, auth_url = validate_google_url(None)
         assert not is_valid
         assert "URL is required" in error
+        assert auth_url is None
 
 
 class TestAudioFileValidation:
@@ -142,12 +145,13 @@ class TestUploadEndpoint:
         }
         
         response = client.post('/api/upload', data=data, content_type='multipart/form-data')
-        assert response.status_code == 400
+        # Can be 400 (missing audio) or 401 (auth required) depending on auth state
+        assert response.status_code in [400, 401]
         json_data = response.get_json()
         assert not json_data['success']
         # Either URL validation fails (due to auth) or audio is missing
         # Both are acceptable failure modes in test environment
-        assert json_data.get('field') in ['audio', 'url']
+        assert json_data.get('field') in ['audio', 'url'] or json_data.get('error_code') == 'AUTH_REQUIRED'
     
     def test_upload_invalid_url_format(self, client):
         """Test upload fails with invalid URL format."""
@@ -170,10 +174,11 @@ class TestUploadEndpoint:
         }
         
         response = client.post('/api/upload', data=data, content_type='multipart/form-data')
-        assert response.status_code == 400
+        # Can be 400 (invalid audio) or 401 (auth required) depending on auth state
+        assert response.status_code in [400, 401]
         json_data = response.get_json()
         assert not json_data['success']
         # Either audio format validation fails or URL validation fails (due to auth)
         # Both are acceptable failure modes in test environment
         error = json_data.get('error', '')
-        assert 'Unsupported audio format' in error or 'authenticate' in error.lower()
+        assert 'Unsupported audio format' in error or 'authenticate' in error.lower() or json_data.get('error_code') == 'AUTH_REQUIRED'

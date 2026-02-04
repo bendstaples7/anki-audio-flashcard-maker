@@ -16,6 +16,21 @@ from googleapiclient.errors import HttpError
 
 from cantonese_anki_generator.config import Config
 from cantonese_anki_generator.processors.google_docs_auth import GoogleDocsAuthenticator
+from cantonese_anki_generator.web.error_responses import (
+    format_error_response,
+    authentication_required_response,
+    authentication_expired_response,
+    missing_credentials_response,
+    invalid_state_response,
+    token_exchange_failed_response,
+    file_too_large_response,
+    invalid_url_response,
+    session_not_found_response,
+    processing_error_response,
+    unexpected_error_response,
+    ErrorCode,
+    ActionRequired
+)
 
 # Create logger
 logger = logging.getLogger(__name__)
@@ -36,11 +51,7 @@ regeneration_progress = {}
 def handle_file_too_large(e):
     """Handle file upload size limit exceeded."""
     logger.warning(f"File upload size limit exceeded: {e}")
-    return jsonify({
-        'success': False,
-        'error': 'File too large. Maximum upload size is 500MB. Please compress your audio file and try again.',
-        'error_code': 'FILE_TOO_LARGE'
-    }), 413
+    return file_too_large_response()
 
 
 # Custom error handler for general exceptions
@@ -49,18 +60,13 @@ def handle_unexpected_error(e):
     """Handle unexpected errors with proper logging."""
     logger.error(f"Unexpected error: {e}", exc_info=True)
     
-    # Don't expose internal error details in production
-    error_message = 'An unexpected error occurred. Please try again or contact support if the problem persists.'
-    
     # In development, include more details
-    if current_app.debug:
-        error_message = f'{type(e).__name__}: {str(e)}'
+    include_details = current_app.debug
     
-    return jsonify({
-        'success': False,
-        'error': error_message,
-        'error_code': 'INTERNAL_ERROR'
-    }), 500
+    return unexpected_error_response(
+        error_details=str(e),
+        include_details=include_details
+    )
 
 
 @bp.route('/health', methods=['GET'])
@@ -70,6 +76,317 @@ def health_check():
         'status': 'ok',
         'message': 'Manual Audio Alignment API is running'
     })
+
+
+@bp.route('/auth/status', methods=['GET'])
+def auth_status():
+    """
+    Get current authentication status.
+    
+    Returns JSON with:
+        - authenticated: bool - Whether user is authenticated
+        - token_valid: bool - Whether tokens are currently valid
+        - expires_at: str - ISO timestamp when tokens expire (None if no tokens)
+        - expires_in_hours: int - Hours until expiration (0 if expired/missing)
+        - needs_reauth: bool - Whether re-authentication is required
+        - authorization_url: str - OAuth URL for authentication (None if authenticated)
+        
+    Requirements: 3.1, 3.2, 3.3, 3.4
+    """
+    try:
+        # Check if credentials file exists
+        if not os.path.exists(Config.CREDENTIALS_FILE):
+            logger.warning("Credentials file not found")
+            return missing_credentials_response()
+        
+        # Initialize authenticator in web mode
+        try:
+            authenticator = GoogleDocsAuthenticator(mode='web')
+        except Exception as e:
+            logger.error(f"Failed to initialize authenticator: {e}", exc_info=True)
+            response = format_error_response(
+                error_message=f'Failed to initialize authentication: {str(e)}',
+                error_code=ErrorCode.AUTH_INIT_ERROR,
+                action_required=ActionRequired.CONTACT_SUPPORT
+            )
+            return jsonify(response), 500
+        
+        # Get token status
+        token_status = authenticator.get_token_status()
+        
+        # Check if tokens are valid
+        if token_status['valid'] and not token_status['expired']:
+            # Calculate hours until expiration
+            expires_in_hours = 0
+            if token_status['expires_at']:
+                time_until_expiry = token_status['expires_at'] - datetime.utcnow()
+                expires_in_hours = max(0, int(time_until_expiry.total_seconds() / 3600))
+            
+            return jsonify({
+                'authenticated': True,
+                'token_valid': True,
+                'expires_at': token_status['expires_at'].isoformat() if token_status['expires_at'] else None,
+                'expires_in_hours': expires_in_hours,
+                'needs_reauth': False,
+                'authorization_url': None
+            }), 200
+        
+        # Tokens are missing, expired, or invalid - need re-authentication
+        # Generate authorization URL
+        try:
+            authorization_url, state_token = authenticator.get_authorization_url()
+            
+            # Store state token in app context for later validation
+            # In production, this should be stored in a more persistent way (Redis, database, etc.)
+            if not hasattr(current_app, 'oauth_states'):
+                current_app.oauth_states = {}
+            current_app.oauth_states[state_token] = {
+                'created_at': datetime.now(),
+                'authenticator': authenticator
+            }
+            
+            return jsonify({
+                'authenticated': False,
+                'token_valid': False,
+                'expires_at': None,
+                'expires_in_hours': 0,
+                'needs_reauth': True,
+                'authorization_url': authorization_url
+            }), 200
+            
+        except FileNotFoundError as e:
+            logger.error(f"Credentials file error: {e}")
+            return missing_credentials_response()
+        except Exception as e:
+            logger.error(f"Failed to generate authorization URL: {e}", exc_info=True)
+            response = format_error_response(
+                error_message=f'Failed to generate authorization URL: {str(e)}',
+                error_code=ErrorCode.AUTH_URL_ERROR,
+                action_required=ActionRequired.CONTACT_SUPPORT
+            )
+            return jsonify(response), 500
+        
+    except Exception as e:
+        logger.error(f"Authentication status check failed: {e}", exc_info=True)
+        response = format_error_response(
+            error_message=f'Failed to check authentication status: {str(e)}',
+            error_code=ErrorCode.STATUS_CHECK_ERROR,
+            action_required=ActionRequired.RETRY
+        )
+        return jsonify(response), 500
+
+
+@bp.route('/auth/callback', methods=['GET'])
+def auth_callback():
+    """
+    OAuth callback endpoint for handling Google OAuth authorization responses.
+    
+    Query Parameters:
+        - code: Authorization code from Google OAuth
+        - state: State token for CSRF validation
+        - error: Error code if authorization failed
+        
+    Returns:
+        JSON response with success/error status and appropriate messages
+        
+    Requirements: 6.1, 6.2, 6.3, 6.4, 6.5
+    """
+    try:
+        # Check for error parameter (user denied authorization or other OAuth error)
+        error = request.args.get('error')
+        if error:
+            error_description = request.args.get('error_description', 'Authorization failed')
+            logger.warning(f"OAuth authorization error: {error} - {error_description}")
+            
+            response = format_error_response(
+                error_message=f'Authorization failed: {error_description}',
+                error_code=ErrorCode.OAUTH_ERROR,
+                action_required=ActionRequired.RETRY,
+                additional_data={
+                    'message': 'Please try authenticating again. If the problem persists, check your Google account permissions.'
+                }
+            )
+            return jsonify(response), 400
+        
+        # Get authorization code and state from query parameters
+        code = request.args.get('code')
+        state = request.args.get('state')
+        
+        # Validate required parameters
+        if not code:
+            logger.warning("OAuth callback missing authorization code")
+            response = format_error_response(
+                error_message='Missing authorization code',
+                error_code=ErrorCode.MISSING_CODE,
+                action_required=ActionRequired.RETRY,
+                additional_data={
+                    'message': 'Authorization code not received. Please try authenticating again.'
+                }
+            )
+            return jsonify(response), 400
+        
+        if not state:
+            logger.warning("OAuth callback missing state token")
+            response = format_error_response(
+                error_message='Missing state token',
+                error_code=ErrorCode.MISSING_STATE,
+                action_required=ActionRequired.RETRY,
+                additional_data={
+                    'message': 'State token not received. This may indicate a security issue. Please try authenticating again.'
+                }
+            )
+            return jsonify(response), 400
+        
+        # Retrieve stored state from app context
+        if not hasattr(current_app, 'oauth_states') or state not in current_app.oauth_states:
+            logger.error(f"Invalid or expired state token: {state}")
+            return invalid_state_response(expired=False)
+        
+        # Get authenticator from stored state
+        state_data = current_app.oauth_states[state]
+        
+        # Check state expiration (10 minutes)
+        created_at = state_data.get('created_at')
+        if created_at:
+            age = datetime.now() - created_at
+            if age.total_seconds() > 600:  # 10 minutes
+                logger.error(f"Expired state token: {state}")
+                # Clean up expired state
+                del current_app.oauth_states[state]
+                return invalid_state_response(expired=True)
+        
+        # Initialize authenticator for token exchange
+        try:
+            authenticator = GoogleDocsAuthenticator(mode='web')
+        except Exception as e:
+            logger.error(f"Failed to initialize authenticator for token exchange: {e}", exc_info=True)
+            response = format_error_response(
+                error_message=f'Failed to initialize authentication: {str(e)}',
+                error_code=ErrorCode.AUTH_INIT_ERROR,
+                action_required=ActionRequired.RETRY,
+                additional_data={
+                    'message': 'An error occurred while setting up authentication. Please try again.'
+                }
+            )
+            return jsonify(response), 500
+        
+        # Set the OAuth state in the authenticator for validation
+        from cantonese_anki_generator.config import Config
+        redirect_uri = Config.OAUTH_REDIRECT_URI
+        
+        authenticator._oauth_state = {
+            'token': state,
+            'created_at': created_at,
+            'redirect_uri': redirect_uri
+        }
+        
+        # Exchange authorization code for tokens
+        try:
+            success = authenticator.exchange_code_for_tokens(
+                code=code,
+                state=state,
+                redirect_uri=redirect_uri
+            )
+            
+            if not success:
+                logger.error("Token exchange failed")
+                return token_exchange_failed_response()
+            
+            # Clean up state token after successful exchange
+            if state in current_app.oauth_states:
+                del current_app.oauth_states[state]
+            
+            logger.info("OAuth authentication successful")
+            
+            # Return HTML page with auto-redirect instead of JSON
+            html_response = """
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Authentication Successful</title>
+                <style>
+                    body {
+                        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                        display: flex;
+                        justify-content: center;
+                        align-items: center;
+                        height: 100vh;
+                        margin: 0;
+                        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                        color: white;
+                    }
+                    .container {
+                        text-align: center;
+                        padding: 40px;
+                        background: rgba(255, 255, 255, 0.1);
+                        border-radius: 12px;
+                        backdrop-filter: blur(10px);
+                    }
+                    h1 { margin: 0 0 20px 0; font-size: 2em; }
+                    p { margin: 10px 0; font-size: 1.1em; opacity: 0.9; }
+                    .spinner {
+                        border: 3px solid rgba(255, 255, 255, 0.3);
+                        border-top: 3px solid white;
+                        border-radius: 50%;
+                        width: 40px;
+                        height: 40px;
+                        animation: spin 1s linear infinite;
+                        margin: 20px auto;
+                    }
+                    @keyframes spin {
+                        0% { transform: rotate(0deg); }
+                        100% { transform: rotate(360deg); }
+                    }
+                </style>
+                <script>
+                    // Redirect after 2 seconds
+                    setTimeout(function() {
+                        window.location.href = '/';
+                    }, 2000);
+                </script>
+            </head>
+            <body>
+                <div class="container">
+                    <h1>✓ Authentication Successful!</h1>
+                    <p>You can now use Google Docs and Sheets.</p>
+                    <div class="spinner"></div>
+                    <p>Redirecting you back to the application...</p>
+                </div>
+            </body>
+            </html>
+            """
+            return html_response, 200
+            
+        except ValueError as e:
+            # State validation error
+            logger.error(f"State validation error during token exchange: {e}")
+            response = format_error_response(
+                error_message=str(e),
+                error_code=ErrorCode.STATE_VALIDATION_ERROR,
+                action_required=ActionRequired.RETRY,
+                additional_data={
+                    'message': 'Authentication validation failed. This may indicate a security issue. Please try authenticating again.'
+                }
+            )
+            return jsonify(response), 400
+        except FileNotFoundError as e:
+            logger.error(f"Credentials file not found during token exchange: {e}")
+            return missing_credentials_response()
+        except Exception as e:
+            logger.error(f"Token exchange failed with unexpected error: {e}", exc_info=True)
+            return token_exchange_failed_response(reason=str(e))
+        
+    except Exception as e:
+        logger.error(f"OAuth callback failed with unexpected error: {e}", exc_info=True)
+        response = format_error_response(
+            error_message=f'Authentication callback failed: {str(e)}',
+            error_code=ErrorCode.CALLBACK_ERROR,
+            action_required=ActionRequired.RETRY,
+            additional_data={
+                'message': 'An unexpected error occurred. Please try authenticating again.'
+            }
+        )
+        return jsonify(response), 500
 
 
 @bp.route('/logs/stream', methods=['GET'])
@@ -98,22 +415,25 @@ def stream_logs():
     )
 
 
-def validate_google_url(url: str) -> Tuple[bool, Optional[str], Optional[str]]:
+def validate_google_url(url: str) -> Tuple[bool, Optional[str], Optional[str], Optional[str]]:
     """
     Validate Google Docs or Sheets URL format and accessibility.
-    Task 19.2: Provide detailed error messages
+    Task 7.1: Enhanced with authentication-specific error codes and authorization URLs
     
     Args:
         url: The URL to validate
         
     Returns:
-        Tuple of (is_valid, error_message, doc_type)
+        Tuple of (is_valid, error_message, doc_type, authorization_url)
         - is_valid: True if URL is valid and accessible
         - error_message: Error message if validation fails, None otherwise
         - doc_type: 'docs' or 'sheets' if valid, None otherwise
+        - authorization_url: OAuth URL for authentication if auth fails, None otherwise
+        
+    Requirements: 4.1, 4.2, 4.3
     """
     if not url or not isinstance(url, str):
-        return False, "URL is required", None
+        return False, "URL is required", None, None
     
     # Check for Google Docs URL pattern
     docs_pattern = r'https://docs\.google\.com/document/d/([a-zA-Z0-9-_]+)'
@@ -123,18 +443,87 @@ def validate_google_url(url: str) -> Tuple[bool, Optional[str], Optional[str]]:
     sheets_match = re.match(sheets_pattern, url)
     
     if not docs_match and not sheets_match:
-        return False, "Invalid URL format. Please provide a valid Google Docs or Google Sheets URL (e.g., https://docs.google.com/document/d/... or https://docs.google.com/spreadsheets/d/...)", None
+        error_msg = (
+            "Invalid URL format. Please provide a valid Google Docs or Google Sheets URL "
+            "(e.g., https://docs.google.com/document/d/... or "
+            "https://docs.google.com/spreadsheets/d/...)"
+        )
+        return False, error_msg, None, None
     
     doc_type = 'docs' if docs_match else 'sheets'
     doc_id = docs_match.group(1) if docs_match else sheets_match.group(1)
     
     # Check accessibility by attempting to access the document
     try:
-        authenticator = GoogleDocsAuthenticator()
-        if not authenticator.authenticate():
-            logger.error("Failed to authenticate with Google API")
-            return False, "Failed to authenticate with Google API. Please ensure credentials are configured correctly.", None
+        # Initialize authenticator in web mode
+        authenticator = GoogleDocsAuthenticator(mode='web')
         
+        # Check if tokens are valid before attempting authentication
+        token_status = authenticator.get_token_status()
+        
+        if not token_status['valid'] or token_status['expired']:
+            # Tokens are invalid or expired - need authentication
+            logger.warning("Authentication required: tokens are invalid or expired")
+            
+            # Generate authorization URL
+            try:
+                authorization_url, state_token = authenticator.get_authorization_url()
+                
+                # Store state token in app context for later validation
+                if not hasattr(current_app, 'oauth_states'):
+                    current_app.oauth_states = {}
+                current_app.oauth_states[state_token] = {
+                    'created_at': datetime.now(),
+                    'authenticator': authenticator
+                }
+                
+                error_message = (
+                    "Authentication required to access Google Docs/Sheets. "
+                    "Please authenticate first:\n"
+                    "1. Click the authorization link provided\n"
+                    "2. Sign in with your Google account\n"
+                    "3. Grant the requested permissions\n"
+                    "4. You will be redirected back automatically"
+                )
+                
+                return False, error_message, None, authorization_url
+                
+            except Exception as e:
+                logger.error(f"Failed to generate authorization URL: {e}", exc_info=True)
+                error_message = (
+                    "Authentication required but failed to generate authorization URL. "
+                    "Please ensure credentials.json is configured correctly."
+                )
+                return False, error_message, None, None
+        
+        # Tokens are valid - attempt to authenticate
+        if not authenticator.authenticate():
+            logger.error("Failed to authenticate with Google API despite valid tokens")
+            
+            # Try to generate authorization URL for re-authentication
+            try:
+                authorization_url, state_token = authenticator.get_authorization_url()
+                
+                if not hasattr(current_app, 'oauth_states'):
+                    current_app.oauth_states = {}
+                current_app.oauth_states[state_token] = {
+                    'created_at': datetime.now(),
+                    'authenticator': authenticator
+                }
+                
+                error_message = (
+                    "Authentication failed. Your session may have expired. "
+                    "Please re-authenticate by clicking the authorization link."
+                )
+                
+                return False, error_message, None, authorization_url
+                
+            except Exception as e:
+                logger.error(f"Failed to generate authorization URL: {e}", exc_info=True)
+                error_message = "Failed to authenticate with Google API. Please ensure credentials are configured correctly."
+                return False, error_message, None, None
+        
+        # Authentication successful - validate document access
         if doc_type == 'docs':
             service = authenticator.get_docs_service()
             # Try to get document metadata
@@ -146,19 +535,46 @@ def validate_google_url(url: str) -> Tuple[bool, Optional[str], Optional[str]]:
             service.spreadsheets().get(spreadsheetId=doc_id).execute()
         
         logger.info(f"Successfully validated {doc_type} URL: {doc_id}")
-        return True, None, doc_type
+        return True, None, doc_type, None
         
     except HttpError as e:
         logger.warning(f"HTTP error validating URL: {e.resp.status} - {e}")
-        if e.resp.status == 404:
-            return False, "Document not found. Please check the URL and ensure the document exists.", None
+        
+        # Check if error is authentication-related
+        if e.resp.status == 401:
+            # Unauthorized - authentication issue
+            try:
+                authenticator = GoogleDocsAuthenticator(mode='web')
+                authorization_url, state_token = authenticator.get_authorization_url()
+                
+                if not hasattr(current_app, 'oauth_states'):
+                    current_app.oauth_states = {}
+                current_app.oauth_states[state_token] = {
+                    'created_at': datetime.now(),
+                    'authenticator': authenticator
+                }
+                
+                error_message = (
+                    "Authentication expired or invalid. "
+                    "Please re-authenticate by clicking the authorization link."
+                )
+                
+                return False, error_message, None, authorization_url
+                
+            except Exception as auth_error:
+                logger.error(f"Failed to generate authorization URL: {auth_error}", exc_info=True)
+                return False, "Authentication required. Please ensure credentials are configured correctly.", None, None
+        
+        elif e.resp.status == 404:
+            return False, "Document not found. Please check the URL and ensure the document exists.", None, None
         elif e.resp.status == 403:
-            return False, "Access denied. Please ensure the document is shared with your Google account or is publicly accessible.", None
+            return False, "Access denied. Please ensure the document is shared with your Google account or is publicly accessible.", None, None
         else:
-            return False, f"Failed to access document (HTTP {e.resp.status}). Please check the URL and your permissions.", None
+            return False, f"Failed to access document (HTTP {e.resp.status}). Please check the URL and your permissions.", None, None
+            
     except Exception as e:
         logger.error(f"Unexpected error validating URL: {e}", exc_info=True)
-        return False, f"Error validating URL: {str(e)}. Please check your internet connection and try again.", None
+        return False, f"Error validating URL: {str(e)}. Please check your internet connection and try again.", None, None
 
 
 def validate_audio_file(file) -> Tuple[bool, Optional[str]]:
@@ -211,25 +627,36 @@ def upload_files():
         url = request.form.get('url', '').strip()
         
         # Validate URL
-        url_valid, url_error, doc_type = validate_google_url(url)
+        url_valid, url_error, doc_type, authorization_url = validate_google_url(url)
         if not url_valid:
             logger.warning(f"URL validation failed: {url_error}")
-            return jsonify({
-                'success': False,
-                'error': url_error,
-                'field': 'url',
-                'error_code': 'INVALID_URL'
-            }), 400
+            
+            if authorization_url:
+                # Authentication required
+                return authentication_required_response(
+                    message=url_error,
+                    authorization_url=authorization_url
+                )
+            else:
+                # Invalid URL format
+                response = format_error_response(
+                    error_message=url_error,
+                    error_code=ErrorCode.INVALID_URL,
+                    action_required=ActionRequired.UPLOAD_FILES,
+                    additional_data={'field': 'url'}
+                )
+                return jsonify(response), 400
         
         # Get audio file from request
         if 'audio' not in request.files:
             logger.warning("No audio file provided in request")
-            return jsonify({
-                'success': False,
-                'error': 'No audio file provided',
-                'field': 'audio',
-                'error_code': 'MISSING_AUDIO'
-            }), 400
+            response = format_error_response(
+                error_message='No audio file provided',
+                error_code=ErrorCode.MISSING_AUDIO,
+                action_required=ActionRequired.UPLOAD_FILES,
+                additional_data={'field': 'audio'}
+            )
+            return jsonify(response), 400
         
         audio_file = request.files['audio']
         
@@ -237,12 +664,13 @@ def upload_files():
         audio_valid, audio_error = validate_audio_file(audio_file)
         if not audio_valid:
             logger.warning(f"Audio validation failed: {audio_error}")
-            return jsonify({
-                'success': False,
-                'error': audio_error,
-                'field': 'audio',
-                'error_code': 'INVALID_AUDIO'
-            }), 400
+            response = format_error_response(
+                error_message=audio_error,
+                error_code=ErrorCode.INVALID_AUDIO,
+                action_required=ActionRequired.UPLOAD_FILES,
+                additional_data={'field': 'audio'}
+            )
+            return jsonify(response), 400
         
         # Save audio file to temporary directory
         filename = secure_filename(audio_file.filename)
@@ -267,11 +695,12 @@ def upload_files():
             logger.info(f"Audio file saved: {filepath}")
         except IOError as e:
             logger.error(f"Failed to save audio file: {e}", exc_info=True)
-            return jsonify({
-                'success': False,
-                'error': 'Failed to save audio file. Please check disk space and try again.',
-                'error_code': 'SAVE_FAILED'
-            }), 500
+            response = format_error_response(
+                error_message='Failed to save audio file. Please check disk space and try again.',
+                error_code=ErrorCode.SAVE_FAILED,
+                action_required=ActionRequired.RETRY
+            )
+            return jsonify(response), 500
         
         # Get file metadata
         try:
@@ -297,11 +726,12 @@ def upload_files():
         
     except Exception as e:
         logger.error(f"Upload failed with unexpected error: {e}", exc_info=True)
-        return jsonify({
-            'success': False,
-            'error': f'Upload failed: {str(e)}. Please try again.',
-            'error_code': 'UPLOAD_ERROR'
-        }), 500
+        response = format_error_response(
+            error_message=f'Upload failed: {str(e)}. Please try again.',
+            error_code=ErrorCode.UPLOAD_ERROR,
+            action_required=ActionRequired.RETRY
+        )
+        return jsonify(response), 500
 
 
 @bp.route('/session/<session_id>', methods=['GET'])
@@ -327,11 +757,12 @@ def get_session(session_id: str):
         # Validate session_id format
         if not session_id or not isinstance(session_id, str):
             logger.warning(f"Invalid session_id format: {session_id}")
-            return jsonify({
-                'success': False,
-                'error': 'Invalid session ID format',
-                'error_code': 'INVALID_SESSION_ID'
-            }), 400
+            response = format_error_response(
+                error_message='Invalid session ID format',
+                error_code=ErrorCode.INVALID_SESSION_ID,
+                action_required=ActionRequired.UPLOAD_FILES
+            )
+            return jsonify(response), 400
         
         # Get session manager from app context
         session_manager = current_app.config.get('SESSION_MANAGER')
@@ -343,19 +774,16 @@ def get_session(session_id: str):
             session = session_manager.get_session(session_id)
         except Exception as e:
             logger.error(f"Error retrieving session {session_id}: {e}", exc_info=True)
-            return jsonify({
-                'success': False,
-                'error': 'Failed to retrieve session data. Please try again.',
-                'error_code': 'SESSION_RETRIEVAL_ERROR'
-            }), 500
+            response = format_error_response(
+                error_message='Failed to retrieve session data. Please try again.',
+                error_code=ErrorCode.SESSION_RETRIEVAL_ERROR,
+                action_required=ActionRequired.RETRY
+            )
+            return jsonify(response), 500
         
         if not session:
             logger.warning(f"Session not found: {session_id}")
-            return jsonify({
-                'success': False,
-                'error': f'Session not found: {session_id}. It may have expired or been deleted.',
-                'error_code': 'SESSION_NOT_FOUND'
-            }), 404
+            return session_not_found_response(session_id)
         
         # Build response with all session data
         # Convert numpy types to Python native types for JSON serialization
@@ -394,11 +822,10 @@ def get_session(session_id: str):
         
     except Exception as e:
         logger.error(f"Failed to retrieve session with unexpected error: {e}", exc_info=True)
-        return jsonify({
-            'success': False,
-            'error': f'Failed to retrieve session: {str(e)}',
-            'error_code': 'UNEXPECTED_ERROR'
-        }), 500
+        return unexpected_error_response(
+            error_details=str(e),
+            include_details=current_app.debug
+        )
 
 
 @bp.route('/session/<session_id>/update', methods=['POST'])
@@ -690,7 +1117,7 @@ def get_audio_segment(session_id: str, term_id: str):
 def process_files():
     """
     Process uploaded files and create alignment session.
-    Task 19.2: Catch and handle processing errors with detailed error messages
+    Task 7.2: Enhanced with authentication validation before processing
     
     Expects JSON body:
         {
@@ -700,6 +1127,8 @@ def process_files():
         
     Returns:
         JSON response with session ID
+        
+    Requirements: 4.4, 4.5
     """
     try:
         from cantonese_anki_generator.web.processing_controller import ProcessingController
@@ -712,39 +1141,101 @@ def process_files():
             data = request.get_json()
         except Exception as e:
             logger.warning(f"Failed to parse JSON data: {e}")
-            return jsonify({
-                'success': False,
-                'error': 'Invalid JSON data provided',
-                'error_code': 'INVALID_JSON'
-            }), 400
+            response = format_error_response(
+                error_message='Invalid JSON data provided',
+                error_code=ErrorCode.INVALID_JSON,
+                action_required=ActionRequired.RETRY
+            )
+            return jsonify(response), 400
         
         if not data:
             logger.warning("No JSON data provided in process request")
-            return jsonify({
-                'success': False,
-                'error': 'No JSON data provided',
-                'error_code': 'MISSING_DATA'
-            }), 400
+            response = format_error_response(
+                error_message='No JSON data provided',
+                error_code=ErrorCode.MISSING_DATA,
+                action_required=ActionRequired.RETRY
+            )
+            return jsonify(response), 400
         
         doc_url = data.get('doc_url')
         audio_filepath = data.get('audio_filepath')
         
         if not doc_url or not audio_filepath:
             logger.warning(f"Missing required fields: doc_url={bool(doc_url)}, audio_filepath={bool(audio_filepath)}")
-            return jsonify({
-                'success': False,
-                'error': 'doc_url and audio_filepath are required',
-                'error_code': 'MISSING_FIELDS'
-            }), 400
+            response = format_error_response(
+                error_message='doc_url and audio_filepath are required',
+                error_code=ErrorCode.MISSING_FIELDS,
+                action_required=ActionRequired.UPLOAD_FILES
+            )
+            return jsonify(response), 400
+        
+        # Task 7.2: Check authentication before processing
+        # This prevents processing from starting if authentication is invalid
+        try:
+            authenticator = GoogleDocsAuthenticator(mode='web')
+            token_status = authenticator.get_token_status()
+            
+            if not token_status['valid'] or token_status['expired']:
+                # Tokens are invalid or expired - need authentication
+                logger.warning("Processing blocked: authentication required")
+                
+                # Generate authorization URL
+                try:
+                    authorization_url, state_token = authenticator.get_authorization_url()
+                    
+                    # Store state token in app context for later validation
+                    if not hasattr(current_app, 'oauth_states'):
+                        current_app.oauth_states = {}
+                    current_app.oauth_states[state_token] = {
+                        'created_at': datetime.now(),
+                        'authenticator': authenticator
+                    }
+                    
+                    error_message = (
+                        "Authentication required to process Google Docs/Sheets. "
+                        "Please authenticate first:\n"
+                        "1. Click the authorization link below\n"
+                        "2. Sign in with your Google account\n"
+                        "3. Grant the requested permissions\n"
+                        "4. Return here and try processing again\n\n"
+                        "Your uploaded files have been preserved and will be available after authentication."
+                    )
+                    
+                    return authentication_required_response(
+                        message=error_message,
+                        authorization_url=authorization_url,
+                        files_preserved=True
+                    )
+                    
+                except Exception as e:
+                    logger.error(f"Failed to generate authorization URL: {e}", exc_info=True)
+                    response = format_error_response(
+                        error_message='Authentication required but failed to generate authorization URL. Please ensure credentials.json is configured correctly.',
+                        error_code=ErrorCode.AUTH_URL_ERROR,
+                        action_required=ActionRequired.CONFIGURE_CREDENTIALS,
+                        files_preserved=True
+                    )
+                    return jsonify(response), 500
+                    
+        except Exception as e:
+            logger.error(f"Authentication check failed: {e}", exc_info=True)
+            response = format_error_response(
+                error_message=f'Failed to check authentication status: {str(e)}. Please try again.',
+                error_code=ErrorCode.AUTH_CHECK_ERROR,
+                action_required=ActionRequired.RETRY,
+                files_preserved=True
+            )
+            return jsonify(response), 500
         
         # Verify audio file exists
         if not os.path.exists(audio_filepath):
             logger.error(f"Audio file not found: {audio_filepath}")
-            return jsonify({
-                'success': False,
-                'error': 'Audio file not found. Please upload the file again.',
-                'error_code': 'FILE_NOT_FOUND'
-            }), 404
+            response = format_error_response(
+                error_message='Audio file not found. Please upload the file again.',
+                error_code=ErrorCode.FILE_NOT_FOUND,
+                action_required=ActionRequired.UPLOAD_FILES
+            )
+            return jsonify(response), 404
         
         # Get or create processing controller
         session_manager = current_app.config.get('SESSION_MANAGER')
@@ -770,36 +1261,78 @@ def process_files():
         except ValueError as e:
             # Handle validation errors from processing
             logger.warning(f"Processing validation error: {e}")
-            return jsonify({
-                'success': False,
-                'error': str(e),
-                'error_code': 'PROCESSING_VALIDATION_ERROR'
-            }), 400
+            response = format_error_response(
+                error_message=str(e),
+                error_code=ErrorCode.PROCESSING_VALIDATION_ERROR,
+                action_required=ActionRequired.RETRY
+            )
+            return jsonify(response), 400
         except FileNotFoundError as e:
             logger.error(f"File not found during processing: {e}")
-            return jsonify({
-                'success': False,
-                'error': 'Required file not found during processing. Please try uploading again.',
-                'error_code': 'PROCESSING_FILE_NOT_FOUND'
-            }), 404
+            response = format_error_response(
+                error_message='Required file not found during processing. Please try uploading again.',
+                error_code=ErrorCode.PROCESSING_FILE_NOT_FOUND,
+                action_required=ActionRequired.UPLOAD_FILES
+            )
+            return jsonify(response), 404
+        except HttpError as e:
+            # Handle Google API errors (including authentication errors)
+            logger.error(f"Google API error during processing: {e.resp.status} - {e}")
+            
+            if e.resp.status == 401:
+                # Authentication error during processing
+                try:
+                    authenticator = GoogleDocsAuthenticator(mode='web')
+                    authorization_url, state_token = authenticator.get_authorization_url()
+                    
+                    if not hasattr(current_app, 'oauth_states'):
+                        current_app.oauth_states = {}
+                    current_app.oauth_states[state_token] = {
+                        'created_at': datetime.now(),
+                        'authenticator': authenticator
+                    }
+                    
+                    error_message = (
+                        "Authentication expired during processing. "
+                        "Please re-authenticate and try again. "
+                        "Your uploaded files have been preserved."
+                    )
+                    
+                    return authentication_expired_response(
+                        authorization_url=authorization_url,
+                        files_preserved=True
+                    )
+                    
+                except Exception as auth_error:
+                    logger.error(f"Failed to generate authorization URL: {auth_error}", exc_info=True)
+                    return authentication_expired_response(files_preserved=True)
+            else:
+                response = format_error_response(
+                    error_message=f'Google API error (HTTP {e.resp.status}): {str(e)}. Please check your document permissions.',
+                    error_code=ErrorCode.GOOGLE_API_ERROR,
+                    action_required=ActionRequired.CHECK_PERMISSIONS,
+                    files_preserved=True
+                )
+                return jsonify(response), 500
+                
         except Exception as e:
             logger.error(f"Processing failed: {e}", exc_info=True)
-            return jsonify({
-                'success': False,
-                'error': f'Processing failed: {str(e)}. Please check your document format and audio file.',
-                'error_code': 'PROCESSING_ERROR'
-            }), 500
+            return processing_error_response(
+                error_details=str(e),
+                files_preserved=True
+            )
         
         # Get session data
         session = session_manager.get_session(session_id)
         
         if not session:
             logger.error(f"Session not found after creation: {session_id}")
-            return jsonify({
-                'success': False,
-                'error': 'Failed to create session',
-                'error_code': 'SESSION_CREATION_FAILED'
-            }), 500
+            response = format_error_response(
+                error_message='Failed to create session',
+                error_code=ErrorCode.SESSION_CREATION_FAILED,
+                action_required=ActionRequired.RETRY
+            )
+            return jsonify(response), 500
         
         logger.info(f"Processing complete: session_id={session_id}, terms={len(session.terms)}")
         
@@ -816,11 +1349,10 @@ def process_files():
         
     except Exception as e:
         logger.error(f"Processing failed with unexpected error: {e}", exc_info=True)
-        return jsonify({
-            'success': False,
-            'error': f'Processing failed: {str(e)}. Please try again or contact support.',
-            'error_code': 'UNEXPECTED_ERROR'
-        }), 500
+        return processing_error_response(
+            error_details=str(e),
+            files_preserved=True
+        )
 
 
 @bp.route('/session/<session_id>/save', methods=['POST'])

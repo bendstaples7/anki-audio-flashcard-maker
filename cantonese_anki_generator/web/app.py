@@ -3,6 +3,103 @@
 from flask import Flask, render_template, send_from_directory
 from flask_cors import CORS
 import os
+import logging
+
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+
+def initialize_authentication(app):
+    """
+    Initialize authentication system on Flask app startup.
+    
+    This function:
+    1. Creates GoogleDocsAuthenticator in web mode
+    2. Validates existing tokens and logs status
+    3. Starts TokenMonitor background task
+    4. Handles missing credentials gracefully (allows app to start)
+    
+    Args:
+        app: Flask application instance
+    """
+    from cantonese_anki_generator.processors.google_docs_auth import GoogleDocsAuthenticator
+    from cantonese_anki_generator.web.token_monitor import TokenMonitor
+    
+    try:
+        logger.info("Initializing authentication system...")
+        
+        # Initialize authenticator in web mode
+        authenticator = GoogleDocsAuthenticator(mode='web')
+        
+        # Store authenticator in app config for access by API endpoints
+        app.config['AUTHENTICATOR'] = authenticator
+        
+        # Check if credentials file exists
+        if not os.path.exists(authenticator.credentials_path):
+            logger.warning(
+                f"⚠️  Credentials file not found: {authenticator.credentials_path}"
+            )
+            logger.warning(
+                "   Authentication will not be available until credentials are configured."
+            )
+            logger.warning(
+                "   Download credentials.json from Google Cloud Console."
+            )
+            # Allow app to start without credentials
+            return
+        
+        # Validate existing tokens
+        token_status = authenticator.get_token_status()
+        
+        if not token_status['valid']:
+            if os.path.exists(authenticator.token_path):
+                logger.warning("⚠️  Existing tokens are invalid or expired")
+                
+                # Attempt automatic refresh if refresh token available
+                if token_status['has_refresh_token']:
+                    logger.info("   Attempting automatic token refresh...")
+                    if authenticator.refresh_tokens():
+                        logger.info("✓ Token refresh successful")
+                        token_status = authenticator.get_token_status()
+                    else:
+                        logger.warning("   Token refresh failed - user re-authentication required")
+            else:
+                logger.warning("⚠️  No authentication tokens found")
+                logger.warning("   Users will need to authenticate through the web interface")
+        else:
+            # Tokens are valid
+            if token_status['expires_at']:
+                logger.info(f"✓ Authentication valid - expires at {token_status['expires_at']}")
+            else:
+                logger.info("✓ Authentication valid")
+            
+            # Check if proactive refresh is needed
+            if token_status['needs_refresh']:
+                logger.info("   Token expiring soon, attempting proactive refresh...")
+                if authenticator.refresh_tokens():
+                    logger.info("✓ Proactive token refresh successful")
+                else:
+                    logger.warning("   Proactive refresh failed - will retry later")
+        
+        # Start background token monitor
+        logger.info("Starting background token monitor...")
+        token_monitor = TokenMonitor(authenticator, check_interval_hours=6)
+        token_monitor.start()
+        
+        # Store monitor in app config for cleanup on shutdown
+        app.config['TOKEN_MONITOR'] = token_monitor
+        
+        logger.info("✓ Authentication system initialized successfully")
+        
+    except Exception as e:
+        logger.error(f"⚠️  Error initializing authentication: {e}")
+        logger.warning("   Application will start but authentication may not work correctly")
+        # Allow app to start even if authentication initialization fails
 
 
 def create_app():
@@ -30,6 +127,9 @@ def create_app():
     # Ensure required directories exist
     os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
     os.makedirs(app.config['SESSION_FOLDER'], exist_ok=True)
+    
+    # Initialize authentication system
+    initialize_authentication(app)
     
     # Clear old sessions and uploads on startup to prevent stale data
     # Only do this in the main process, not the reloader process

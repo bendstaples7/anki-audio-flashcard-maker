@@ -2,6 +2,19 @@
 
 This directory contains the Flask-based web interface for reviewing and adjusting audio-term alignments.
 
+## Authentication
+
+**Important**: The web interface requires Google OAuth authentication to access Google Docs and Sheets.
+
+For detailed authentication setup, troubleshooting, and configuration instructions, see:
+- **[Web Authentication Guide](AUTHENTICATION.md)** - Complete guide for web authentication setup
+
+Quick setup:
+1. Create OAuth credentials in Google Cloud Console
+2. Download `credentials.json` to project root
+3. Configure callback URL: `http://localhost:5000/api/auth/callback`
+4. Start the application and follow authentication prompts
+
 ## Directory Structure
 
 ```
@@ -34,6 +47,10 @@ python cantonese_anki_generator/web/run.py
 The application will be available at: http://localhost:3000
 
 ## API Endpoints
+
+### Authentication
+- **GET** `/api/auth/status` - Check authentication status and get authorization URL
+- **GET** `/api/auth/callback` - OAuth callback endpoint (handles authorization code exchange)
 
 ### Health Check
 - **GET** `/api/health` - Check API status
