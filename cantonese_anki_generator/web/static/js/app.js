@@ -1104,7 +1104,10 @@ function initializeTermWaveform(containerId, termId, options = {}) {
         backend: 'WebAudio',
         interact: true,
         hideScrollbar: true,
-        minPxPerSec: 100
+        minPxPerSec: 100,
+        fillParent: true,  // Force waveform to fill container width
+        autoScroll: false,  // Prevent automatic scrolling
+        autoCenter: false   // Prevent automatic centering
     };
     
     const wavesurfer = WaveSurfer.create({
