@@ -27,6 +27,28 @@ class Config:
     CREDENTIALS_FILE = "credentials.json"
     TOKEN_FILE = "token.json"
     
+    # Web authentication settings
+    OAUTH_REDIRECT_URI = os.environ.get(
+        'OAUTH_REDIRECT_URI',
+        'http://localhost:3000/api/auth/callback'
+    )
+    """
+    OAuth redirect URI for web-based authentication flow.
+    
+    Can be configured via OAUTH_REDIRECT_URI environment variable.
+    Default: http://localhost:3000/api/auth/callback (development)
+    Production example: https://yourdomain.com/api/auth/callback
+    """
+    
+    TOKEN_REFRESH_THRESHOLD_HOURS = 24
+    """Threshold in hours before token expiration to trigger proactive refresh."""
+    
+    BACKGROUND_MONITOR_INTERVAL_HOURS = 6
+    """Interval in hours for background token monitoring task."""
+    
+    STATE_TOKEN_EXPIRATION_MINUTES = 10
+    """Expiration time in minutes for OAuth state tokens (CSRF protection)."""
+    
     # Anki settings
     ANKI_MODEL_NAME = "Cantonese Vocabulary"
     ANKI_DECK_NAME = "Cantonese Learning"

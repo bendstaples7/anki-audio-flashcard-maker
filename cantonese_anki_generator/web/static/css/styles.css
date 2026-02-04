@@ -1316,3 +1316,90 @@ section h2 {
         max-height: 400px;
     }
 }
+
+
+/* Authentication Banner Styles */
+.auth-banner {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    padding: 20px;
+    border-radius: 8px;
+    margin-bottom: 30px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    animation: slideDownDeep 0.3s ease-out;
+}
+
+@keyframes slideDownDeep {
+    from {
+        opacity: 0;
+        transform: translateY(-20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.auth-banner-content {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    position: relative;
+}
+
+.auth-banner-icon {
+    font-size: 2.5em;
+    flex-shrink: 0;
+}
+
+.auth-banner-text {
+    flex: 1;
+}
+
+.auth-banner-text strong {
+    display: block;
+    font-size: 1.2em;
+    margin-bottom: 5px;
+}
+
+.auth-banner-text p {
+    margin: 0;
+    opacity: 0.9;
+}
+
+.auth-btn {
+    background-color: white !important;
+    color: #667eea !important;
+    border: none !important;
+    padding: 12px 24px !important;
+    font-weight: 600;
+    white-space: nowrap;
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.auth-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+.auth-banner-close {
+    position: absolute;
+    top: -10px;
+    right: -10px;
+    background: rgba(255, 255, 255, 0.2);
+    border: none;
+    color: white;
+    font-size: 24px;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.2s;
+}
+
+.auth-banner-close:hover {
+    background: rgba(255, 255, 255, 0.3);
+}

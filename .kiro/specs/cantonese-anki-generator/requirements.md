@@ -98,7 +98,7 @@ The Cantonese Anki Generator is an automated tool that transforms Google Docs co
 2. WHEN a segment's transcription matches a different term better than its assigned term, THE Cantonese_Anki_Generator SHALL detect this mismatch
 3. WHEN multiple segments are misaligned, THE Cantonese_Anki_Generator SHALL use the Hungarian algorithm to find the globally optimal reassignment of segments to terms
 4. WHEN reassigning segments, THE Cantonese_Anki_Generator SHALL maximize the total similarity between transcriptions and expected terms across all assignments
-5. WHEN reassignment completes, THE Cantonese_Anki_Generator SHALL sort terms by their audio segment start times to maintain temporal order
+5. WHEN reassignment completes, THE Cantonese_Anki_Generator SHALL maintain vocabulary terms in their original spreadsheet order while reassigning audio segments to their optimal terms
 6. WHEN a segment contains silence or no speech, THE Cantonese_Anki_Generator SHALL assign it to the term with the lowest confidence match or mark it for manual review
 7. WHEN logging reassignments, THE Cantonese_Anki_Generator SHALL report which segments were moved, their similarity scores, and confidence improvements
 8. THE global reassignment SHALL handle any permutation of misalignments, not just adjacent swaps

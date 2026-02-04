@@ -30,6 +30,8 @@ pip install -r requirements.txt
 2. Create your `credentials.json` file (see `credentials.json.template`)
 3. **Never commit credentials to version control!**
 
+**For Web Application Users**: See [Web Authentication Guide](cantonese_anki_generator/web/AUTHENTICATION.md) for detailed web-specific authentication setup and troubleshooting.
+
 ### 3. Development Setup (Optional)
 ```bash
 pip install -e .[dev]
@@ -42,6 +44,14 @@ pytest
 ```
 
 ## Usage
+
+### Web Interface
+```bash
+python -m cantonese_anki_generator.web.run
+```
+Then open your browser to `http://localhost:3000`
+
+For web authentication setup and troubleshooting, see the [Web Authentication Guide](cantonese_anki_generator/web/AUTHENTICATION.md).
 
 ### Interactive Mode
 ```bash

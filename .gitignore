@@ -135,6 +135,7 @@ token.json
 service-account-*.json
 client_secret*.json
 oauth_credentials*.json
+.oauth_states.json
 
 # SECURITY: Environment variables and secrets
 .env

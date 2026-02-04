@@ -63,6 +63,9 @@ function initApp() {
     // Initialize session loading (check URL for session ID)
     initSessionLoading();
     
+    // Check authentication status
+    checkAuthenticationStatus();
+    
     // Check API health
     checkAPIHealth();
 }
@@ -208,6 +211,90 @@ async function checkAPIHealth() {
             retryLabel: 'Retry Connection',
             autoHide: false
         });
+    }
+}
+
+/**
+ * Check authentication status on page load
+ */
+async function checkAuthenticationStatus() {
+    try {
+        const response = await fetch(`${API_BASE}/auth/status`);
+        const data = await response.json();
+        
+        if (data.needs_reauth || !data.authenticated) {
+            // Show authentication required banner
+            showAuthenticationBanner(data.authorization_url);
+        } else {
+            console.log('Authentication OK - token expires in', data.expires_in_hours, 'hours');
+            // Remove banner if it exists (user just authenticated)
+            const banner = document.getElementById('auth-banner');
+            if (banner) {
+                banner.remove();
+            }
+        }
+    } catch (error) {
+        console.error('Failed to check authentication status:', error);
+        // Don't show error - authentication check is optional
+    }
+}
+
+/**
+ * Show authentication required banner with authorization link
+ * @param {string} authUrl - OAuth authorization URL
+ */
+function showAuthenticationBanner(authUrl) {
+    console.log('showAuthenticationBanner called with URL:', authUrl);
+    
+    // Create banner if it doesn't exist
+    let banner = document.getElementById('auth-banner');
+    if (!banner) {
+        console.log('Creating new authentication banner');
+        banner = document.createElement('div');
+        banner.id = 'auth-banner';
+        banner.className = 'auth-banner';
+        banner.innerHTML = `
+            <div class="auth-banner-content">
+                <div class="auth-banner-icon">🔐</div>
+                <div class="auth-banner-text">
+                    <strong>Authentication Required</strong>
+                    <p>You need to authenticate with Google to access Docs and Sheets.</p>
+                </div>
+                <a href="${authUrl}" class="btn btn-primary auth-btn" target="_blank" rel="noopener noreferrer">
+                    <span class="btn-icon">🔑</span> Authenticate with Google
+                </a>
+                <button class="auth-banner-close" onclick="this.parentElement.parentElement.remove()">×</button>
+            </div>
+        `;
+        
+        // Insert at the top of the page
+        const container = document.querySelector('#app') || document.querySelector('main') || document.body;
+        if (container && container.firstChild) {
+            container.insertBefore(banner, container.firstChild);
+            console.log('Banner inserted into page');
+        } else {
+            console.error('Container not found or has no children!');
+        }
+    } else {
+        console.log('Banner already exists');
+    }
+}
+
+/**
+ * Handle authentication errors from API responses
+ * @param {Object} errorData - Error response data
+ */
+function handleAuthenticationError(errorData) {
+    if (errorData.error_code === 'AUTHENTICATION_REQUIRED' && errorData.authorization_url) {
+        showAuthenticationBanner(errorData.authorization_url);
+        
+        // Show simple error message (banner already has the link)
+        showError(
+            errorData.error || 'Authentication required. Please use the banner above to authenticate.',
+            { autoHide: false }
+        );
+    } else {
+        showError(errorData.error || 'Authentication failed', { autoHide: false });
     }
 }
 
@@ -364,7 +451,17 @@ async function handleFormSubmit(event) {
         
         const uploadData = await uploadResponse.json();
         
+        // Debug: Log the response
+        console.log('Upload response status:', uploadResponse.status);
+        console.log('Upload response data:', uploadData);
+        
         if (!uploadResponse.ok) {
+            // Check for authentication error
+            if (uploadResponse.status === 401 || uploadData.error_code === 'AUTHENTICATION_REQUIRED') {
+                console.log('Authentication error detected, authorization_url:', uploadData.authorization_url);
+                handleAuthenticationError(uploadData);
+                throw new Error('Authentication required');
+            }
             throw new Error(uploadData.error || 'Upload failed');
         }
         
@@ -390,6 +487,11 @@ async function handleFormSubmit(event) {
         const processData = await processResponse.json();
         
         if (!processResponse.ok) {
+            // Check for authentication error
+            if (processResponse.status === 401 || processData.error_code === 'AUTHENTICATION_REQUIRED') {
+                handleAuthenticationError(processData);
+                throw new Error('Authentication required');
+            }
             throw new Error(processData.error || 'Processing failed');
         }
         
