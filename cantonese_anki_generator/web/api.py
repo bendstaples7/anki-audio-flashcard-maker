@@ -256,8 +256,7 @@ def auth_callback():
         try:
             success = authenticator.exchange_code_for_tokens(
                 code=code,
-                state=state,
-                redirect_uri=redirect_uri
+                state=state
             )
             
             if not success:
