@@ -6,7 +6,7 @@ This plan outlines the steps to diagnose and fix the broken waveform edge draggi
 
 ## Tasks
 
-- [ ] 1. Add debugging instrumentation to understand current behavior
+- [x] 1. Add debugging instrumentation to understand current behavior
   - Add console logging to track WaveSurfer initialization lifecycle
   - Add logging to verify Regions plugin registration
   - Add logging to track region creation and configuration
@@ -16,33 +16,33 @@ This plan outlines the steps to diagnose and fix the broken waveform edge draggi
   - Test in browser and review console output to identify failure point
   - _Requirements: Investigation, All Requirements_
 
-- [ ] 2. Fix CSS overflow issue that may clip drag handles
-  - [ ] 2.1 Update term-waveform CSS to allow handles to be visible
+- [x] 2. Fix CSS overflow issue that may clip drag handles
+  - [x] 2.1 Update term-waveform CSS to allow handles to be visible
     - Change `overflow: hidden` to `overflow: visible` in `.term-waveform` class
     - Test that waveform container still looks correct
     - _Requirements: 1.1_
   
-  - [ ] 2.2 Add explicit CSS for region drag handles
+  - [x] 2.2 Add explicit CSS for region drag handles
     - Add CSS rules for `[data-resize]` elements to ensure visibility
     - Set `cursor: ew-resize` for resize handles
     - Set `pointer-events: auto` to ensure handles are interactive
     - Set appropriate `z-index` to ensure handles are on top
     - _Requirements: 1.1, 4.5_
   
-  - [ ] 2.3 Test CSS changes in browser
+  - [x] 2.3 Test CSS changes in browser
     - Verify drag handles are visible
     - Verify cursor changes on hover
     - Verify handles are clickable
     - _Requirements: 1.1, 4.5_
 
-- [ ] 3. Fix WaveSurfer ready state timing issue
-  - [ ] 3.1 Update renderTermWaveform to wait for ready event
+- [x] 3. Fix WaveSurfer ready state timing issue
+  - [x] 3.1 Update renderTermWaveform to wait for ready event
     - Wrap wavesurfer.load() in Promise that resolves on 'ready' event
     - Use `wavesurfer.once('ready', resolve)` before loading audio
     - Ensure region is only added after ready event fires
     - _Requirements: 1.2, 1.3_
   
-  - [ ] 3.2 Add error handling for load failures
+  - [x] 3.2 Add error handling for load failures
     - Catch errors during audio loading
     - Log errors and show user-friendly message
     - Provide retry option if load fails
@@ -53,34 +53,34 @@ This plan outlines the steps to diagnose and fix the broken waveform edge draggi
     - Test that region is added after ready event
     - _Requirements: 1.2, 1.3_
 
-- [ ] 4. Verify and enhance Regions plugin configuration
-  - [ ] 4.1 Add explicit configuration when creating Regions plugin
+- [x] 4. Verify and enhance Regions plugin configuration
+  - [x] 4.1 Add explicit configuration when creating Regions plugin
     - Pass configuration object to `WaveSurfer.Regions.create()`
     - Set `dragSelection: false` to prevent accidental region creation
     - Add any other required configuration options
     - _Requirements: 1.2, 1.3_
   
-  - [ ] 4.2 Add WaveSurfer version logging
+  - [x] 4.2 Add WaveSurfer version logging
     - Log `WaveSurfer.VERSION` on initialization
     - Verify version matches expected version
     - Document any version-specific API differences
     - _Requirements: 4.1_
   
-  - [ ] 4.3 Verify region configuration after creation
+  - [x] 4.3 Verify region configuration after creation
     - Log region properties after `addRegion()` call
     - Verify `resize: true` is set correctly
     - Verify `drag: false` is set correctly
     - _Requirements: 1.2, 1.3_
 
-- [ ] 5. Enhance event listener setup with verification
-  - [ ] 5.1 Add verification checks in setupRegionDragHandlersForTrim
+- [x] 5. Enhance event listener setup with verification
+  - [x] 5.1 Add verification checks in setupRegionDragHandlersForTrim
     - Check that regionsPlugin is not null/undefined
     - Check that region exists using `getRegions()`
     - Log warning if region not found
     - Return early if verification fails
     - _Requirements: 1.4_
   
-  - [ ] 5.2 Add event listener verification
+  - [x] 5.2 Add event listener verification
     - Log when each event listener is attached
     - Add test event to verify listeners are firing
     - Log when drag events fire (start, update, end)
@@ -92,8 +92,8 @@ This plan outlines the steps to diagnose and fix the broken waveform edge draggi
     - Verify event handlers are called with correct parameters
     - _Requirements: 1.4_
 
-- [ ] 6. Implement helper functions for verification
-  - [ ] 6.1 Create verifyRegionInteractivity function
+- [x] 6. Implement helper functions for verification
+  - [x] 6.1 Create verifyRegionInteractivity function
     - Check that waveform data exists
     - Check that region exists in regions list
     - Check that region element exists in DOM
@@ -101,20 +101,20 @@ This plan outlines the steps to diagnose and fix the broken waveform edge draggi
     - Return boolean indicating if region is interactive
     - _Requirements: 1.1, 1.2, 1.3_
   
-  - [ ] 6.2 Create ensureRegionHandlesVisible function
+  - [x] 6.2 Create ensureRegionHandlesVisible function
     - Find region element in DOM
     - Find all drag handle elements
     - Apply inline styles to ensure visibility and interactivity
     - Set cursor, pointer-events, and z-index
     - _Requirements: 1.1, 4.5_
   
-  - [ ] 6.3 Call helper functions after region creation
+  - [x] 6.3 Call helper functions after region creation
     - Call verifyRegionInteractivity after setupRegionDragHandlersForTrim
     - Call ensureRegionHandlesVisible if verification passes
     - Log results for debugging
     - _Requirements: 1.1, 1.2, 1.3_
 
-- [ ] 7. Test drag functionality in development environment
+- [x] 7. Test drag functionality in development environment
   - Load manual alignment interface with test data
   - Verify console logs show correct initialization sequence
   - Test hovering over region edges (cursor should change)
@@ -125,8 +125,8 @@ This plan outlines the steps to diagnose and fix the broken waveform edge draggi
   - Test with multiple terms to ensure consistency
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5_
 
-- [ ] 8. Test boundary constraints
-  - [ ] 8.1 Test start boundary cannot exceed end boundary
+- [-] 8. Test boundary constraints
+  - [x] 8.1 Test start boundary cannot exceed end boundary
     - Drag start boundary past end boundary
     - Verify boundary stops at constraint limit
     - Verify visual feedback is provided
