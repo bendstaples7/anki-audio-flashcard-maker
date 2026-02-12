@@ -1277,8 +1277,6 @@ Examples:
   %(prog)s "https://docs.google.com/spreadsheets/d/..." audio.wav --verbose
   %(prog)s "https://docs.google.com/spreadsheets/d/..." audio.wav --enable-speech-verification
   %(prog)s "https://docs.google.com/spreadsheets/d/..." audio.wav --debug-alignment
-  %(prog)s --gui  # Launch graphical interface
-  %(prog)s --gui --create-shortcut  # Create desktop shortcut for GUI
   %(prog)s --help-setup  # Show setup and preparation guide
 
 Output:
@@ -1307,9 +1305,10 @@ Validation Options:
   Normal: Balanced validation with reasonable thresholds (default)
   Lenient: Lower thresholds, allows more questionable alignments through
 
-GUI Mode:
-  Use --gui to launch the graphical interface for easier use
-  Use --gui --create-shortcut to create a desktop shortcut for quick access
+Web Interface:
+  For manual audio alignment with visual waveform editing, use the web interface:
+  python -m cantonese_anki_generator.web.run
+  Then open your browser to http://localhost:3000
         """
     )
     
@@ -1358,21 +1357,15 @@ GUI Mode:
     )
     
     parser.add_argument(
+        "--create-shortcut",
+        action="store_true",
+        help="Create desktop shortcut for the web interface"
+    )
+    
+    parser.add_argument(
         "--check-formats",
         action="store_true",
         help="Check input formats without processing"
-    )
-    
-    parser.add_argument(
-        "--gui",
-        action="store_true",
-        help="Launch the graphical user interface"
-    )
-    
-    parser.add_argument(
-        "--create-shortcut",
-        action="store_true",
-        help="Create desktop shortcut for GUI (use with --gui)"
     )
     
     parser.add_argument(
@@ -1429,41 +1422,24 @@ GUI Mode:
     
     args = parser.parse_args()
     
-    # Validate argument combinations
-    if args.create_shortcut and not args.gui:
-        parser.error("--create-shortcut can only be used with --gui")
-    
     # Handle special commands
     if args.help_setup:
         show_processing_tips()
         return 0
     
-    if args.gui:
-        try:
-            from .gui import CantoneseAnkiGeneratorGUI
-            
-            # Handle shortcut creation if requested
-            if args.create_shortcut:
-                from .gui.shortcut_creator import create_desktop_shortcut
-                print("Creating desktop shortcut for GUI...")
-                if create_desktop_shortcut():
-                    print("✅ Desktop shortcut created successfully!")
-                    print("You can now launch the GUI by double-clicking the shortcut on your desktop.")
-                else:
-                    print("❌ Failed to create desktop shortcut.")
-                return 0
-            
-            # Launch GUI
-            app = CantoneseAnkiGeneratorGUI()
-            app.run()
-            return 0
-        except ImportError as e:
-            print(f"❌ GUI dependencies not available: {e}")
-            print("   The GUI requires tkinter, which should be included with Python.")
-            return 1
-        except Exception as e:
-            print(f"❌ Error launching GUI: {e}")
-            return 1
+    if args.create_shortcut:
+        from cantonese_anki_generator.web.shortcut_creator import WebShortcutCreator
+        print("Creating desktop shortcut for web interface...")
+        creator = WebShortcutCreator()
+        if creator.create_shortcut():
+            print("✅ Desktop shortcut created successfully!")
+            print("Double-click the shortcut to launch the web interface.")
+            print("Your browser will open to http://localhost:3000")
+        else:
+            print("❌ Failed to create desktop shortcut.")
+            print("You can still launch the web interface using:")
+            print("  python -m cantonese_anki_generator.web.run")
+        return 0
     
     # Interactive mode if arguments are missing
     if not args.google_doc_url or not args.audio_file:
