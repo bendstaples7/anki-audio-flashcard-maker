@@ -1585,6 +1585,8 @@ async function renderTermWaveform(termId, audioUrl, startTime, endTime) {
         // This prevents overwhelming the user with multiple error toasts
     }
 }
+
+/**
  * Retry loading a waveform after a failure
  * @param {string} termId - Term identifier
  * @param {string} audioUrl - URL to the audio segment
