@@ -1436,11 +1436,12 @@ Web Interface:
                 print("✅ Desktop shortcut created successfully!")
                 print("Double-click the shortcut to launch the web interface.")
                 print("Your browser will open to http://localhost:3000")
+                return 0
             else:
                 print("❌ Failed to create desktop shortcut.")
                 print("You can still launch the web interface using:")
                 print("  python -m cantonese_anki_generator.web.run")
-            return 0
+                return 1
         except ImportError as e:
             print(f"❌ Failed to create desktop shortcut: missing or broken web dependencies")
             print(f"   Error: {e}")
