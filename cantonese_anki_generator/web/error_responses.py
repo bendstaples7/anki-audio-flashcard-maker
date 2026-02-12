@@ -59,6 +59,12 @@ class ErrorCode:
     INVALID_JSON = "INVALID_JSON"
     MISSING_DATA = "MISSING_DATA"
     MISSING_FIELDS = "MISSING_FIELDS"
+    INVALID_INPUT = "INVALID_INPUT"
+    EMPTY_INPUT = "EMPTY_INPUT"
+    VALIDATION_ERROR = "VALIDATION_ERROR"
+    
+    # Spreadsheet preparation errors
+    SHEET_EXPORT_ERROR = "SHEET_EXPORT_ERROR"
     
     # General errors
     INTERNAL_ERROR = "INTERNAL_ERROR"
@@ -75,6 +81,7 @@ class ActionRequired:
     RETRY = "retry"
     CONTACT_SUPPORT = "contact_support"
     CONFIGURE_CREDENTIALS = "configure_credentials"
+    FIX_VALIDATION_ERRORS = "fix_validation_errors"
 
 
 def format_error_response(

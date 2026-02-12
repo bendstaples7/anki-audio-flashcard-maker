@@ -22,7 +22,8 @@ class Config:
     # Google Docs API settings
     GOOGLE_DOCS_SCOPES = [
         "https://www.googleapis.com/auth/documents.readonly",
-        "https://www.googleapis.com/auth/spreadsheets.readonly"
+        "https://www.googleapis.com/auth/spreadsheets.readonly",
+        "https://www.googleapis.com/auth/spreadsheets"  # Write access for spreadsheet preparation
     ]
     CREDENTIALS_FILE = "credentials.json"
     TOKEN_FILE = "token.json"
@@ -57,6 +58,14 @@ class Config:
     MIN_AUDIO_DURATION = 0.1  # seconds
     MAX_AUDIO_DURATION = 10.0  # seconds
     ALIGNMENT_CONFIDENCE_THRESHOLD = 0.5
+    
+    # Spreadsheet preparation settings
+    TRANSLATION_API_TIMEOUT = 30  # seconds
+    TRANSLATION_BATCH_SIZE = 50  # max terms per batch
+    ROMANIZATION_BACKEND = 'espeak'  # phonemizer backend
+    ROMANIZATION_LANGUAGE = 'yue'  # Cantonese language code
+    ROMANIZATION_PRESERVE_PUNCTUATION = True
+    SPREADSHEET_EXPORT_TIMEOUT = 30  # seconds
     
     @classmethod
     def ensure_directories(cls):

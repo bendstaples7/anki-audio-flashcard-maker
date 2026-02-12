@@ -85,6 +85,26 @@ class AnkiGenerationError(CantoneseAnkiError):
     pass
 
 
+class SpreadsheetPrepError(CantoneseAnkiError):
+    """Base exception for spreadsheet preparation errors."""
+    pass
+
+
+class TranslationServiceError(SpreadsheetPrepError):
+    """Raised when translation service fails."""
+    pass
+
+
+class RomanizationServiceError(SpreadsheetPrepError):
+    """Raised when romanization service fails."""
+    pass
+
+
+class SheetExportError(SpreadsheetPrepError):
+    """Raised when sheet export fails."""
+    pass
+
+
 class ErrorHandler:
     """
     Centralized error handling and reporting system.
@@ -549,6 +569,253 @@ class ErrorHandler:
                 'failed_items': failed_items,
                 'success_rate': success_rate
             }
+        )
+    
+    def handle_translation_service_error(self, error: Exception, context: Dict[str, Any] = None) -> ProcessingError:
+        """Handle translation service errors."""
+        error_str = str(error).lower()
+        
+        if 'timeout' in error_str or 'timed out' in error_str:
+            return ProcessingError(
+                category=ErrorCategory.NETWORK,
+                severity=ErrorSeverity.ERROR,
+                message="Translation service timeout",
+                details=f"Translation request timed out: {error}",
+                suggested_actions=[
+                    "Check your internet connection",
+                    "Try again in a few moments",
+                    "Reduce the number of terms being translated at once",
+                    "Manually enter translations for failed terms"
+                ],
+                error_code="TRANS_001",
+                context=context
+            )
+        
+        if 'api' in error_str or 'service' in error_str or 'unavailable' in error_str:
+            return ProcessingError(
+                category=ErrorCategory.NETWORK,
+                severity=ErrorSeverity.ERROR,
+                message="Translation service unavailable",
+                details=f"Translation API is currently unavailable: {error}",
+                suggested_actions=[
+                    "Check your internet connection",
+                    "Verify the translation API is configured correctly",
+                    "Try again in a few moments",
+                    "Manually enter translations for failed terms"
+                ],
+                error_code="TRANS_002",
+                context=context
+            )
+        
+        if 'auth' in error_str or 'key' in error_str or 'credential' in error_str:
+            return ProcessingError(
+                category=ErrorCategory.AUTHENTICATION,
+                severity=ErrorSeverity.ERROR,
+                message="Translation service authentication failed",
+                details=f"Authentication error with translation API: {error}",
+                suggested_actions=[
+                    "Check that the translation API key is configured",
+                    "Verify the API key is valid and not expired",
+                    "Ensure the API is enabled in your account",
+                    "Check API usage limits and quotas"
+                ],
+                error_code="TRANS_003",
+                context=context
+            )
+        
+        if 'rate' in error_str or 'limit' in error_str or 'quota' in error_str:
+            return ProcessingError(
+                category=ErrorCategory.NETWORK,
+                severity=ErrorSeverity.ERROR,
+                message="Translation service rate limit exceeded",
+                details=f"API rate limit or quota exceeded: {error}",
+                suggested_actions=[
+                    "Wait a few minutes before trying again",
+                    "Reduce the number of terms being translated",
+                    "Check your API usage limits",
+                    "Consider upgrading your API plan if needed"
+                ],
+                error_code="TRANS_004",
+                context=context
+            )
+        
+        return ProcessingError(
+            category=ErrorCategory.NETWORK,
+            severity=ErrorSeverity.ERROR,
+            message="Translation service error",
+            details=f"Translation failed: {error}",
+            suggested_actions=[
+                "Check your internet connection",
+                "Try again in a few moments",
+                "Manually enter translations for failed terms"
+            ],
+            error_code="TRANS_005",
+            context=context
+        )
+    
+    def handle_romanization_service_error(self, error: Exception, context: Dict[str, Any] = None) -> ProcessingError:
+        """Handle romanization service errors."""
+        error_str = str(error).lower()
+        
+        if 'phonemizer' in error_str or 'espeak' in error_str:
+            return ProcessingError(
+                category=ErrorCategory.AUDIO_PROCESSING,
+                severity=ErrorSeverity.ERROR,
+                message="Romanization service initialization failed",
+                details=f"Phonemizer library error: {error}",
+                suggested_actions=[
+                    "Ensure phonemizer library is installed correctly",
+                    "Check that espeak-ng is installed on your system",
+                    "Verify Cantonese (yue) language support is available",
+                    "Manually enter Jyutping for failed entries"
+                ],
+                error_code="ROM_001",
+                context=context
+            )
+        
+        if 'unsupported' in error_str or 'character' in error_str:
+            return ProcessingError(
+                category=ErrorCategory.INPUT_VALIDATION,
+                severity=ErrorSeverity.WARNING,
+                message="Unsupported characters in text",
+                details=f"Romanization encountered unsupported characters: {error}",
+                suggested_actions=[
+                    "Check that the Cantonese text contains valid Chinese characters",
+                    "Remove or replace unsupported characters",
+                    "Manually enter Jyutping for affected entries"
+                ],
+                error_code="ROM_002",
+                context=context
+            )
+        
+        if 'empty' in error_str or 'no text' in error_str:
+            return ProcessingError(
+                category=ErrorCategory.INPUT_VALIDATION,
+                severity=ErrorSeverity.WARNING,
+                message="Empty text for romanization",
+                details=f"Cannot romanize empty text: {error}",
+                suggested_actions=[
+                    "Ensure Cantonese text is not empty",
+                    "Check that translation completed successfully",
+                    "Manually enter Jyutping for affected entries"
+                ],
+                error_code="ROM_003",
+                context=context
+            )
+        
+        return ProcessingError(
+            category=ErrorCategory.AUDIO_PROCESSING,
+            severity=ErrorSeverity.ERROR,
+            message="Romanization service error",
+            details=f"Romanization failed: {error}",
+            suggested_actions=[
+                "Check that the Cantonese text is valid",
+                "Try romanizing the text manually",
+                "Manually enter Jyutping for failed entries"
+            ],
+            error_code="ROM_004",
+            context=context
+        )
+    
+    def handle_sheet_export_error(self, error: Exception, context: Dict[str, Any] = None) -> ProcessingError:
+        """Handle Google Sheets export errors."""
+        error_str = str(error).lower()
+        
+        if 'auth' in error_str or 'credential' in error_str or 'token' in error_str:
+            return ProcessingError(
+                category=ErrorCategory.AUTHENTICATION,
+                severity=ErrorSeverity.ERROR,
+                message="Google Sheets authentication required",
+                details=f"Authentication error: {error}",
+                suggested_actions=[
+                    "Click the authentication link to sign in",
+                    "Sign in with your Google account",
+                    "Grant the requested permissions",
+                    "Ensure credentials.json file is present and valid"
+                ],
+                error_code="EXPORT_001",
+                context=context
+            )
+        
+        if 'permission' in error_str or 'access' in error_str or '403' in error_str:
+            return ProcessingError(
+                category=ErrorCategory.AUTHENTICATION,
+                severity=ErrorSeverity.ERROR,
+                message="Google Sheets permission denied",
+                details=f"Permission error: {error}",
+                suggested_actions=[
+                    "Check that Google Sheets API is enabled",
+                    "Verify your Google account has permission to create sheets",
+                    "Re-authenticate with Google",
+                    "Check API usage limits"
+                ],
+                error_code="EXPORT_002",
+                context=context
+            )
+        
+        if 'network' in error_str or 'connection' in error_str or 'timeout' in error_str:
+            return ProcessingError(
+                category=ErrorCategory.NETWORK,
+                severity=ErrorSeverity.ERROR,
+                message="Network error during sheet export",
+                details=f"Network error: {error}",
+                suggested_actions=[
+                    "Check your internet connection",
+                    "Try exporting again",
+                    "Ensure Google services are accessible",
+                    "Check firewall settings"
+                ],
+                error_code="EXPORT_003",
+                context=context
+            )
+        
+        if 'quota' in error_str or 'limit' in error_str or 'rate' in error_str:
+            return ProcessingError(
+                category=ErrorCategory.NETWORK,
+                severity=ErrorSeverity.ERROR,
+                message="Google Sheets API quota exceeded",
+                details=f"API quota or rate limit exceeded: {error}",
+                suggested_actions=[
+                    "Wait a few minutes before trying again",
+                    "Check your Google API usage limits",
+                    "Consider upgrading your API quota if needed"
+                ],
+                error_code="EXPORT_004",
+                context=context
+            )
+        
+        return ProcessingError(
+            category=ErrorCategory.NETWORK,
+            severity=ErrorSeverity.ERROR,
+            message="Google Sheets export failed",
+            details=f"Failed to create Google Sheet: {error}",
+            suggested_actions=[
+                "Check your internet connection",
+                "Verify Google Sheets API is enabled",
+                "Try exporting again",
+                "Check authentication status"
+            ],
+            error_code="EXPORT_005",
+            context=context
+        )
+    
+    def handle_validation_error(self, validation_errors: List[str], context: Dict[str, Any] = None) -> ProcessingError:
+        """Handle validation errors for spreadsheet preparation."""
+        error_count = len(validation_errors)
+        
+        return ProcessingError(
+            category=ErrorCategory.INPUT_VALIDATION,
+            severity=ErrorSeverity.ERROR,
+            message="Validation failed for vocabulary entries",
+            details=f"{error_count} validation error(s) found: {', '.join(validation_errors[:3])}{'...' if error_count > 3 else ''}",
+            suggested_actions=[
+                "Review highlighted entries in the table",
+                "Fill in missing English or Cantonese text",
+                "Ensure all required fields are completed",
+                "Try exporting again after fixing errors"
+            ],
+            error_code="VALID_001",
+            context=context
         )
 
 
