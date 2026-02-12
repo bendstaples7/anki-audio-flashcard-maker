@@ -8,6 +8,6 @@
   },
   "then": {
     "type": "askAgent",
-    "prompt": "I notice you used uncertain language (likely/probably/might/seems/appears). Instead of making assumptions, please investigate and verify what actually happened. Use available tools to check files, run commands, or gather concrete evidence before drawing conclusions."
+    "prompt": "If you used uncertain language (likely/probably/might/seems/appears), please investigate and verify what actually happened. Use available tools to check files, run commands, or gather concrete evidence before drawing conclusions."
   }
 }

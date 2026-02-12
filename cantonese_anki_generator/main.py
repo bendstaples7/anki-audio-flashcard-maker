@@ -1428,18 +1428,30 @@ Web Interface:
         return 0
     
     if args.create_shortcut:
-        from cantonese_anki_generator.web.shortcut_creator import WebShortcutCreator
-        print("Creating desktop shortcut for web interface...")
-        creator = WebShortcutCreator()
-        if creator.create_shortcut():
-            print("✅ Desktop shortcut created successfully!")
-            print("Double-click the shortcut to launch the web interface.")
-            print("Your browser will open to http://localhost:3000")
-        else:
-            print("❌ Failed to create desktop shortcut.")
+        try:
+            from cantonese_anki_generator.web.shortcut_creator import WebShortcutCreator
+            print("Creating desktop shortcut for web interface...")
+            creator = WebShortcutCreator()
+            if creator.create_shortcut():
+                print("✅ Desktop shortcut created successfully!")
+                print("Double-click the shortcut to launch the web interface.")
+                print("Your browser will open to http://localhost:3000")
+            else:
+                print("❌ Failed to create desktop shortcut.")
+                print("You can still launch the web interface using:")
+                print("  python -m cantonese_anki_generator.web.run")
+            return 0
+        except ImportError as e:
+            print(f"❌ Failed to create desktop shortcut: missing or broken web dependencies")
+            print(f"   Error: {e}")
+            print("   Please ensure all dependencies are installed:")
+            print("   pip install -r requirements.txt")
+            return 1
+        except Exception as e:
+            print(f"❌ Failed to create desktop shortcut: {e}")
             print("You can still launch the web interface using:")
             print("  python -m cantonese_anki_generator.web.run")
-        return 0
+            return 1
     
     # Interactive mode if arguments are missing
     if not args.google_doc_url or not args.audio_file:
