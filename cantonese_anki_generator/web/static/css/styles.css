@@ -543,8 +543,72 @@ section h2 {
     background-color: #fafafa;
     border-radius: 4px;
     border: 1px solid #e0e0e0;
-    overflow: hidden; /* Contain WaveSurfer rendering */
+    overflow: visible; /* Allow drag handles to extend beyond container */
     position: relative; /* Establish positioning context */
+}
+
+/* Force WaveSurfer to disable horizontal scrolling */
+.term-waveform .scroll {
+    overflow-x: hidden !important;
+}
+
+/* Force wrapper to fill parent width */
+.term-waveform .wrapper {
+    width: 100% !important;
+}
+
+/* Ensure region drag handles are visible and interactive */
+.term-waveform [data-resize] {
+    cursor: ew-resize !important;
+    pointer-events: auto !important;
+    z-index: 10 !important;
+}
+
+/* Waveform error display */
+.waveform-error {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    padding: 10px;
+    background-color: #fff3cd;
+    border-radius: 4px;
+}
+
+.waveform-error .error-icon {
+    font-size: 24px;
+    margin-bottom: 5px;
+}
+
+.waveform-error .error-text {
+    font-size: 0.9em;
+    color: #856404;
+    margin-bottom: 8px;
+}
+
+.retry-waveform-btn {
+    padding: 6px 12px;
+    background-color: #3498db;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.85em;
+    transition: background-color 0.2s;
+}
+
+.retry-waveform-btn:hover {
+    background-color: #2980b9;
+}
+
+.loading-message {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: #7f8c8d;
+    font-size: 0.9em;
 }
 
 .boundary-times {

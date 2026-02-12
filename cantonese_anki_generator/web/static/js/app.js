@@ -1091,6 +1091,22 @@ function initializeFullWaveform(containerId, options = {}) {
  * @returns {Object} WaveSurfer instance
  */
 function initializeTermWaveform(containerId, termId, options = {}) {
+    console.log(`[DEBUG] initializeTermWaveform called for term: ${termId}, container: ${containerId}`);
+    
+    // Log WaveSurfer version and verify it matches expected version
+    if (typeof WaveSurfer !== 'undefined' && WaveSurfer.VERSION) {
+        console.log(`[DEBUG] WaveSurfer version: ${WaveSurfer.VERSION}`);
+        const expectedVersion = '7.7.3';
+        if (WaveSurfer.VERSION !== expectedVersion) {
+            console.warn(`[DEBUG] WaveSurfer version mismatch! Expected: ${expectedVersion}, Got: ${WaveSurfer.VERSION}`);
+            console.warn(`[DEBUG] API differences may exist - verify Regions plugin compatibility`);
+        } else {
+            console.log(`[DEBUG] WaveSurfer version matches expected version: ${expectedVersion}`);
+        }
+    } else {
+        console.error(`[DEBUG] WaveSurfer.VERSION not available - cannot verify version`);
+    }
+    
     const defaultOptions = {
         container: `#${containerId}`,
         waveColor: '#95a5a6',
@@ -1102,29 +1118,74 @@ function initializeTermWaveform(containerId, termId, options = {}) {
         height: 80,
         normalize: true,
         backend: 'WebAudio',
-        interact: true,
+        interact: false,    // Disable waveform dragging/panning
         hideScrollbar: true,
-        minPxPerSec: 100,
-        fillParent: true,  // Force waveform to fill container width
+        minPxPerSec: 50,    // Reduce to fit longer audio without scrolling
+        fillParent: true,   // Force waveform to fill container width
         autoScroll: false,  // Prevent automatic scrolling
         autoCenter: false   // Prevent automatic centering
     };
+    
+    console.log(`[DEBUG] Creating WaveSurfer instance with options:`, { ...defaultOptions, ...options });
     
     const wavesurfer = WaveSurfer.create({
         ...defaultOptions,
         ...options
     });
     
+    console.log(`[DEBUG] WaveSurfer instance created for term: ${termId}`);
+    
+    // Add lifecycle event logging
+    wavesurfer.on('init', () => {
+        console.log(`[DEBUG] WaveSurfer 'init' event fired for term: ${termId}`);
+    });
+    
+    wavesurfer.on('ready', () => {
+        console.log(`[DEBUG] WaveSurfer 'ready' event fired for term: ${termId}`);
+        console.log(`[DEBUG] Duration: ${wavesurfer.getDuration()}s`);
+    });
+    
+    wavesurfer.on('decode', () => {
+        console.log(`[DEBUG] WaveSurfer 'decode' event fired for term: ${termId}`);
+    });
+    
+    wavesurfer.on('error', (error) => {
+        console.error(`[DEBUG] WaveSurfer error for term ${termId}:`, error);
+    });
+    
     // Add regions plugin for draggable boundary markers
-    const regionsPlugin = wavesurfer.registerPlugin(WaveSurfer.Regions.create());
+    console.log(`[DEBUG] Registering Regions plugin for term: ${termId}`);
+    
+    // Check if Regions plugin is available
+    if (!WaveSurfer.Regions) {
+        console.error(`[DEBUG] WaveSurfer.Regions plugin not available!`);
+        
+        // Store instance even without regions to prevent memory leak
+        WaveSurferInstances.termWaveforms.set(termId, {
+            instance: wavesurfer,
+            regions: null,
+            regionsAvailable: false
+        });
+        
+        return wavesurfer;
+    }
+    
+    // Create regions plugin with explicit configuration
+    const regionsPlugin = wavesurfer.registerPlugin(
+        WaveSurfer.Regions.create({
+            dragSelection: false  // Disable creating regions by dragging on waveform
+        })
+    );
+    console.log(`[DEBUG] Regions plugin registered for term: ${termId}`, regionsPlugin);
     
     // Store reference
     WaveSurferInstances.termWaveforms.set(termId, {
         instance: wavesurfer,
-        regions: regionsPlugin
+        regions: regionsPlugin,
+        regionsAvailable: true
     });
     
-    console.log(`Term waveform initialized for term: ${termId}`);
+    console.log(`[DEBUG] Term waveform initialized and stored for term: ${termId}`);
     
     return wavesurfer;
 }
@@ -1335,6 +1396,12 @@ async function renderWaveformsProgressively(alignments) {
     for (let i = 0; i < alignments.length; i++) {
         const alignment = alignments[i];
         
+        // Skip terms with invalid time ranges (0-0 means no audio aligned)
+        if (alignment.start_time === 0 && alignment.end_time === 0) {
+            console.warn(`Skipping term ${alignment.term_id} - no audio aligned (0s - 0s)`);
+            continue;
+        }
+        
         if (alignment.audio_segment_url) {
             try {
                 await renderTermWaveform(
@@ -1353,6 +1420,8 @@ async function renderWaveformsProgressively(alignments) {
                 console.error(`Failed to render waveform for term ${alignment.term_id}:`, error);
                 // Continue with next waveform even if one fails
             }
+        } else {
+            console.warn(`Skipping term ${alignment.term_id} - no audio segment URL`);
         }
     }
     
@@ -1369,11 +1438,15 @@ async function renderWaveformsProgressively(alignments) {
 async function renderTermWaveform(termId, audioUrl, startTime, endTime) {
     const containerId = `waveform-${termId}`;
     
+    console.log(`[DEBUG] renderTermWaveform called for term: ${termId}`);
+    console.log(`[DEBUG] Audio URL: ${audioUrl}`);
+    console.log(`[DEBUG] Time range: ${startTime}s - ${endTime}s`);
+    
     try {
         // Destroy existing waveform if it exists
         const existingWaveform = getTermWaveform(termId);
         if (existingWaveform) {
-            console.log(`Destroying existing waveform for term ${termId}`);
+            console.log(`[DEBUG] Destroying existing waveform for term ${termId}`);
             // Properly clean up regions plugin and all event listeners
             if (existingWaveform.regions) {
                 existingWaveform.regions.destroy();
@@ -1383,39 +1456,196 @@ async function renderTermWaveform(termId, audioUrl, startTime, endTime) {
         }
         
         // Initialize WaveSurfer for this term
+        console.log(`[DEBUG] Initializing WaveSurfer for term: ${termId}`);
         const wavesurfer = initializeTermWaveform(containerId, termId);
         
-        // Load the audio segment
-        await wavesurfer.load(audioUrl);
+        // Load the audio segment and wait for ready event
+        console.log(`[DEBUG] Loading audio for term: ${termId}`);
+        await new Promise((resolve, reject) => {
+            // Set up ready event listener before loading
+            wavesurfer.once('ready', () => {
+                console.log(`[DEBUG] Ready event fired for term: ${termId}`);
+                resolve();
+            });
+            
+            // Set up error event listener
+            wavesurfer.once('error', (error) => {
+                console.error(`[DEBUG] Error loading audio for term ${termId}:`, error);
+                reject(error);
+            });
+            
+            // Start loading audio
+            wavesurfer.load(audioUrl);
+        });
+        console.log(`[DEBUG] Audio loaded and ready for term: ${termId}`);
         
         // Get the waveform data (includes regions plugin)
         const waveformData = getTermWaveform(termId);
+        console.log(`[DEBUG] Retrieved waveform data for term: ${termId}`, waveformData);
         
         if (waveformData && waveformData.regions) {
             // Add a draggable region covering the full segment
             // User can drag the edges to trim
             const duration = wavesurfer.getDuration();
+            console.log(`[DEBUG] Creating region for term: ${termId}, duration: ${duration}s`);
             
-            const region = waveformData.regions.addRegion({
+            const regionConfig = {
                 id: `region-${termId}`,
                 start: 0,
                 end: duration,
                 color: 'rgba(52, 152, 219, 0.3)', // Semi-transparent blue
-                drag: false, // Don't allow dragging the whole region
-                resize: true, // Allow resizing from edges
+                drag: true,       // Enable dragging (required for edge resizing in WaveSurfer v7)
+                resize: true,     // Allow resizing from edges
                 content: ''
-            });
+            };
+            
+            const region = waveformData.regions.addRegion(regionConfig);
+            console.log(`[DEBUG] Region created for term: ${termId}`, region);
+            
+            // Force shadow DOM to disable scrolling and fill parent
+            setTimeout(() => {
+                const container = document.getElementById(containerId);
+                if (container) {
+                    const shadowRoot = container.querySelector('div')?.shadowRoot;
+                    if (shadowRoot) {
+                        const scrollDiv = shadowRoot.querySelector('.scroll');
+                        const wrapperDiv = shadowRoot.querySelector('.wrapper');
+                        
+                        if (scrollDiv) {
+                            scrollDiv.style.overflowX = 'hidden';
+                            console.log(`[DEBUG] Forced overflow-x: hidden for term: ${termId}`);
+                        }
+                        
+                        if (wrapperDiv) {
+                            wrapperDiv.style.width = '100%';
+                            console.log(`[DEBUG] Forced width: 100% for term: ${termId}`);
+                        }
+                    }
+                }
+            }, 100);
             
             // Set up drag handlers for automatic trimming
+            console.log(`[DEBUG] Setting up region drag handlers for term: ${termId}`);
             setupRegionDragHandlersForTrim(termId, waveformData.regions);
+        } else {
+            console.error(`[DEBUG] No waveform data or regions plugin for term: ${termId}`);
         }
         
-        console.log(`Waveform rendered for term ${termId}`);
+        console.log(`[DEBUG] Waveform rendering complete for term ${termId}`);
         
     } catch (error) {
-        console.error(`Failed to render waveform for term ${termId}:`, error);
-        // Don't show error toast for individual waveform failures
-        // Just log it and continue
+        console.log(`[DEBUG] Failed to render waveform for term ${termId}:`, error);
+        console.error(`[DEBUG] Error stack:`, error.stack);
+        
+        // Show user-friendly error message with retry option
+        const waveformContainer = document.getElementById(containerId);
+        if (waveformContainer) {
+            // Clear container
+            waveformContainer.innerHTML = '';
+            
+            // Create error display elements
+            const errorDiv = document.createElement('div');
+            errorDiv.className = 'waveform-error';
+            
+            const errorIcon = document.createElement('div');
+            errorIcon.className = 'error-icon';
+            errorIcon.textContent = '⚠️';
+            
+            const errorText = document.createElement('div');
+            errorText.className = 'error-text';
+            errorText.textContent = 'Failed to load waveform';
+            
+            const retryButton = document.createElement('button');
+            retryButton.className = 'retry-waveform-btn';
+            retryButton.textContent = '🔄 Retry';
+            
+            // Store data in dataset to avoid XSS
+            retryButton.dataset.termId = termId;
+            retryButton.dataset.audioUrl = audioUrl;
+            retryButton.dataset.startTime = startTime;
+            retryButton.dataset.endTime = endTime;
+            
+            // Attach event listener instead of inline onclick
+            retryButton.addEventListener('click', () => {
+                retryWaveformLoad(
+                    retryButton.dataset.termId,
+                    retryButton.dataset.audioUrl,
+                    parseFloat(retryButton.dataset.startTime),
+                    parseFloat(retryButton.dataset.endTime)
+                );
+            });
+            
+            errorDiv.appendChild(errorIcon);
+            errorDiv.appendChild(errorText);
+            errorDiv.appendChild(retryButton);
+            waveformContainer.appendChild(errorDiv);
+        }
+        
+        // Log error but don't show toast for individual waveform failures
+        // This prevents overwhelming the user with multiple error toasts
+    }
+}
+
+/**
+ * Retry loading a waveform after a failure
+ * @param {string} termId - Term identifier
+ * @param {string} audioUrl - URL to the audio segment
+ * @param {number} startTime - Start time in seconds
+ * @param {number} endTime - End time in seconds
+ */
+async function retryWaveformLoad(termId, audioUrl, startTime, endTime) {
+    console.log(`[DEBUG] Retrying waveform load for term: ${termId}`);
+    
+    // Clear the error message
+    const waveformContainer = document.getElementById(`waveform-${termId}`);
+    if (waveformContainer) {
+        waveformContainer.innerHTML = '<div class="loading-message">Loading waveform...</div>';
+    }
+    
+    // Attempt to render the waveform again with error handling
+    try {
+        await renderTermWaveform(termId, audioUrl, startTime, endTime);
+    } catch (error) {
+        console.error(`[DEBUG] Retry failed for term ${termId}:`, error);
+        
+        // Restore error UI if retry fails
+        if (waveformContainer) {
+            waveformContainer.innerHTML = '';
+            
+            const errorDiv = document.createElement('div');
+            errorDiv.className = 'waveform-error';
+            
+            const errorIcon = document.createElement('div');
+            errorIcon.className = 'error-icon';
+            errorIcon.textContent = '⚠️';
+            
+            const errorText = document.createElement('div');
+            errorText.className = 'error-text';
+            errorText.textContent = 'Failed to load waveform. Retry?';
+            
+            const retryButton = document.createElement('button');
+            retryButton.className = 'retry-waveform-btn';
+            retryButton.textContent = '🔄 Retry';
+            
+            retryButton.dataset.termId = termId;
+            retryButton.dataset.audioUrl = audioUrl;
+            retryButton.dataset.startTime = startTime;
+            retryButton.dataset.endTime = endTime;
+            
+            retryButton.addEventListener('click', () => {
+                retryWaveformLoad(
+                    retryButton.dataset.termId,
+                    retryButton.dataset.audioUrl,
+                    parseFloat(retryButton.dataset.startTime),
+                    parseFloat(retryButton.dataset.endTime)
+                );
+            });
+            
+            errorDiv.appendChild(errorIcon);
+            errorDiv.appendChild(errorText);
+            errorDiv.appendChild(retryButton);
+            waveformContainer.appendChild(errorDiv);
+        }
     }
 }
 
@@ -1426,72 +1656,138 @@ async function renderTermWaveform(termId, audioUrl, startTime, endTime) {
  * @param {Object} regionsPlugin - WaveSurfer regions plugin instance
  */
 function setupRegionDragHandlersForTrim(termId, regionsPlugin) {
-    console.log(`Setting up trim drag handlers for term ${termId}`);
+    console.log(`[DEBUG] setupRegionDragHandlersForTrim called for term: ${termId}`);
+    console.log(`[DEBUG] Regions plugin:`, regionsPlugin);
+    
+    // Task 5.1: Add verification checks in setupRegionDragHandlersForTrim
+    // Check that regionsPlugin is not null/undefined
+    if (!regionsPlugin) {
+        console.warn(`[VERIFICATION] Regions plugin not found for term ${termId} - cannot setup drag handlers`);
+        return;
+    }
+    
+    // Check that region exists using getRegions()
+    const regions = regionsPlugin.getRegions();
+    console.log(`[DEBUG] All regions:`, regions);
+    
+    if (!regions || regions.length === 0) {
+        console.warn(`[VERIFICATION] No regions found in plugin for term ${termId} - region may not be created yet`);
+        return;
+    }
+    
+    const region = regions.find(r => r.id === `region-${termId}`);
+    
+    // Log warning if region not found
+    if (!region) {
+        console.warn(`[VERIFICATION] Region with id 'region-${termId}' not found in regions list. Available regions: ${regions.map(r => r.id).join(', ')}`);
+        return;
+    }
+    
+    console.log(`[VERIFICATION] Region found for term ${termId}:`, region);
+    console.log(`[VERIFICATION] Region resize enabled: ${region.resize}`);
+    console.log(`[VERIFICATION] Region drag enabled: ${region.drag}`);
     
     // Get the alignment data for this term to know the current absolute times
     const alignment = AppState.alignments.find(a => a.term_id === termId);
     if (!alignment) {
-        console.error(`No alignment found for term ${termId}`);
+        console.error(`[DEBUG] No alignment found for term ${termId}`);
         return;
     }
     
     const originalStartTime = alignment.start_time;
     const originalDuration = alignment.end_time - alignment.start_time;
     
-    // Track if user is actively dragging (prevents auto-trim on programmatic updates)
-    let userIsDragging = false;
+    // Track if user is actively dragging/resizing (prevents auto-trim on programmatic updates)
+    let userIsInteracting = false;
+    let lastKnownStart = null;
+    let lastKnownEnd = null;
     
-    // Listen for region update start (user starts dragging)
+    // Task 5.2: Add event listener verification
+    // Log when each event listener is attached
+    console.log(`[EVENT-LISTENER] Attaching 'region-update-start' event listener for term: ${termId}`);
     regionsPlugin.on('region-update-start', (region) => {
+        console.log(`[EVENT-FIRED] 'region-update-start' event fired for region: ${region.id}`);
         if (region.id === `region-${termId}`) {
-            userIsDragging = true;
+            userIsInteracting = true;
+            lastKnownStart = region.start;
+            lastKnownEnd = region.end;
+            console.log(`[EVENT-FIRED] User started interacting with region for term: ${termId}`);
         }
     });
+    console.log(`[EVENT-LISTENER] ✓ 'region-update-start' listener attached successfully for term: ${termId}`);
     
-    // Listen for region update events (while dragging)
+    // Listen for region update events (while dragging/resizing)
+    console.log(`[EVENT-LISTENER] Attaching 'region-updated' event listener for term: ${termId}`);
     regionsPlugin.on('region-updated', (region) => {
-        if (region.id === `region-${termId}` && userIsDragging) {
-            // Region times are relative to the segment (0 to duration)
-            // Convert to absolute times by adding the original start time
-            // and scaling based on the original duration
-            const relativeStart = region.start;
-            const relativeEnd = region.end;
+        console.log(`[EVENT-FIRED] 'region-updated' event fired for region: ${region.id}, userIsInteracting: ${userIsInteracting}`);
+        if (region.id === `region-${termId}`) {
+            // Check if boundaries actually changed (to detect user interaction even if region-update-start didn't fire)
+            const boundariesChanged = lastKnownStart !== region.start || lastKnownEnd !== region.end;
             
-            // Get current segment duration from waveform
-            const waveformData = getTermWaveform(termId);
-            if (!waveformData) return;
-            
-            const currentDuration = waveformData.instance.getDuration();
-            
-            // Calculate absolute times
-            // The region is on the current audio segment, so we need to map it back
-            // to absolute times based on the current alignment
-            const currentAlignment = AppState.alignments.find(a => a.term_id === termId);
-            if (!currentAlignment) return;
-            
-            const absoluteStart = currentAlignment.start_time + (relativeStart / currentDuration) * (currentAlignment.end_time - currentAlignment.start_time);
-            const absoluteEnd = currentAlignment.start_time + (relativeEnd / currentDuration) * (currentAlignment.end_time - currentAlignment.start_time);
-            
-            // Update input fields with absolute times
-            const startInput = document.getElementById(`start-${termId}`);
-            const endInput = document.getElementById(`end-${termId}`);
-            
-            if (startInput && endInput) {
-                startInput.value = absoluteStart.toFixed(2);
-                endInput.value = absoluteEnd.toFixed(2);
+            if (boundariesChanged) {
+                // Boundaries changed - this is a user interaction (resize or drag)
+                userIsInteracting = true;
+                lastKnownStart = region.start;
+                lastKnownEnd = region.end;
+                
+                console.log(`[EVENT-FIRED] Boundaries changed - updating input fields - start: ${region.start}s, end: ${region.end}s`);
+                
+                // Region times are relative to the segment (0 to duration)
+                // Convert to absolute times by adding the original start time
+                // and scaling based on the original duration
+                const relativeStart = region.start;
+                const relativeEnd = region.end;
+                
+                // Get current segment duration from waveform
+                const waveformData = getTermWaveform(termId);
+                if (!waveformData) return;
+                
+                const currentDuration = waveformData.instance.getDuration();
+                
+                // Calculate absolute times
+                // The region is on the current audio segment, so we need to map it back
+                // to absolute times based on the current alignment
+                const currentAlignment = AppState.alignments.find(a => a.term_id === termId);
+                if (!currentAlignment) return;
+                
+                const absoluteStart = currentAlignment.start_time + (relativeStart / currentDuration) * (currentAlignment.end_time - currentAlignment.start_time);
+                const absoluteEnd = currentAlignment.start_time + (relativeEnd / currentDuration) * (currentAlignment.end_time - currentAlignment.start_time);
+                
+                console.log(`[DEBUG] Calculated absolute times - start: ${absoluteStart.toFixed(2)}s, end: ${absoluteEnd.toFixed(2)}s`);
+                
+                // Update input fields with absolute times
+                const startInput = document.getElementById(`start-${termId}`);
+                const endInput = document.getElementById(`end-${termId}`);
+                
+                if (startInput && endInput) {
+                    startInput.value = absoluteStart.toFixed(2);
+                    endInput.value = absoluteEnd.toFixed(2);
+                    console.log(`[EVENT-FIRED] Updated input fields for term: ${termId}`);
+                } else {
+                    console.warn(`[EVENT-FIRED] Input fields not found for term: ${termId}`);
+                }
             }
         }
     });
+    console.log(`[EVENT-LISTENER] ✓ 'region-updated' listener attached successfully for term: ${termId}`);
     
-    // Listen for region update end (when user finishes dragging)
+    // Listen for region update end (when user finishes dragging/resizing)
+    console.log(`[EVENT-LISTENER] Attaching 'region-update-end' event listener for term: ${termId}`);
     regionsPlugin.on('region-update-end', async (region) => {
-        if (region.id === `region-${termId}` && userIsDragging) {
-            userIsDragging = false;
+        console.log(`[EVENT-FIRED] 'region-update-end' event fired for region: ${region.id}, userIsInteracting: ${userIsInteracting}`);
+        if (region.id === `region-${termId}` && userIsInteracting) {
+            userIsInteracting = false;
+            console.log(`[EVENT-FIRED] User finished interacting with region for term: ${termId}`);
+            console.log(`[EVENT-FIRED] Final boundaries - start: ${region.start}s, end: ${region.end}s`);
             
             // Automatically trigger trim with the new boundaries from input fields
+            console.log(`[EVENT-FIRED] Triggering automatic trim for term: ${termId}`);
             await handleTrimBoundaries(termId);
         }
     });
+    console.log(`[EVENT-LISTENER] ✓ 'region-update-end' listener attached successfully for term: ${termId}`);
+    
+    console.log(`[EVENT-LISTENER] ✓✓✓ All 3 event listeners attached successfully for term: ${termId}`);
 }
 
 /**
