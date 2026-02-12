@@ -1159,6 +1159,14 @@ function initializeTermWaveform(containerId, termId, options = {}) {
     // Check if Regions plugin is available
     if (!WaveSurfer.Regions) {
         console.error(`[DEBUG] WaveSurfer.Regions plugin not available!`);
+        
+        // Store instance even without regions to prevent memory leak
+        WaveSurferInstances.termWaveforms.set(termId, {
+            instance: wavesurfer,
+            regions: null,
+            regionsAvailable: false
+        });
+        
         return wavesurfer;
     }
     
@@ -1173,7 +1181,8 @@ function initializeTermWaveform(containerId, termId, options = {}) {
     // Store reference
     WaveSurferInstances.termWaveforms.set(termId, {
         instance: wavesurfer,
-        regions: regionsPlugin
+        regions: regionsPlugin,
+        regionsAvailable: true
     });
     
     console.log(`[DEBUG] Term waveform initialized and stored for term: ${termId}`);
@@ -1525,30 +1534,57 @@ async function renderTermWaveform(termId, audioUrl, startTime, endTime) {
         console.log(`[DEBUG] Waveform rendering complete for term ${termId}`);
         
     } catch (error) {
-        console.error(`[DEBUG] Failed to render waveform for term ${termId}:`, error);
+        console.log(`[DEBUG] Failed to render waveform for term ${termId}:`, error);
         console.error(`[DEBUG] Error stack:`, error.stack);
         
         // Show user-friendly error message with retry option
         const waveformContainer = document.getElementById(containerId);
         if (waveformContainer) {
-            // Display error message in the waveform container
-            waveformContainer.innerHTML = `
-                <div class="waveform-error">
-                    <div class="error-icon">⚠️</div>
-                    <div class="error-text">Failed to load waveform</div>
-                    <button class="retry-waveform-btn" onclick="retryWaveformLoad('${termId}', '${audioUrl}', ${startTime}, ${endTime})">
-                        🔄 Retry
-                    </button>
-                </div>
-            `;
+            // Clear container
+            waveformContainer.innerHTML = '';
+            
+            // Create error display elements
+            const errorDiv = document.createElement('div');
+            errorDiv.className = 'waveform-error';
+            
+            const errorIcon = document.createElement('div');
+            errorIcon.className = 'error-icon';
+            errorIcon.textContent = '⚠️';
+            
+            const errorText = document.createElement('div');
+            errorText.className = 'error-text';
+            errorText.textContent = 'Failed to load waveform';
+            
+            const retryButton = document.createElement('button');
+            retryButton.className = 'retry-waveform-btn';
+            retryButton.textContent = '🔄 Retry';
+            
+            // Store data in dataset to avoid XSS
+            retryButton.dataset.termId = termId;
+            retryButton.dataset.audioUrl = audioUrl;
+            retryButton.dataset.startTime = startTime;
+            retryButton.dataset.endTime = endTime;
+            
+            // Attach event listener instead of inline onclick
+            retryButton.addEventListener('click', () => {
+                retryWaveformLoad(
+                    retryButton.dataset.termId,
+                    retryButton.dataset.audioUrl,
+                    parseFloat(retryButton.dataset.startTime),
+                    parseFloat(retryButton.dataset.endTime)
+                );
+            });
+            
+            errorDiv.appendChild(errorIcon);
+            errorDiv.appendChild(errorText);
+            errorDiv.appendChild(retryButton);
+            waveformContainer.appendChild(errorDiv);
         }
         
         // Log error but don't show toast for individual waveform failures
         // This prevents overwhelming the user with multiple error toasts
     }
 }
-
-/**
  * Retry loading a waveform after a failure
  * @param {string} termId - Term identifier
  * @param {string} audioUrl - URL to the audio segment
@@ -1564,8 +1600,51 @@ async function retryWaveformLoad(termId, audioUrl, startTime, endTime) {
         waveformContainer.innerHTML = '<div class="loading-message">Loading waveform...</div>';
     }
     
-    // Attempt to render the waveform again
-    await renderTermWaveform(termId, audioUrl, startTime, endTime);
+    // Attempt to render the waveform again with error handling
+    try {
+        await renderTermWaveform(termId, audioUrl, startTime, endTime);
+    } catch (error) {
+        console.error(`[DEBUG] Retry failed for term ${termId}:`, error);
+        
+        // Restore error UI if retry fails
+        if (waveformContainer) {
+            waveformContainer.innerHTML = '';
+            
+            const errorDiv = document.createElement('div');
+            errorDiv.className = 'waveform-error';
+            
+            const errorIcon = document.createElement('div');
+            errorIcon.className = 'error-icon';
+            errorIcon.textContent = '⚠️';
+            
+            const errorText = document.createElement('div');
+            errorText.className = 'error-text';
+            errorText.textContent = 'Failed to load waveform. Retry?';
+            
+            const retryButton = document.createElement('button');
+            retryButton.className = 'retry-waveform-btn';
+            retryButton.textContent = '🔄 Retry';
+            
+            retryButton.dataset.termId = termId;
+            retryButton.dataset.audioUrl = audioUrl;
+            retryButton.dataset.startTime = startTime;
+            retryButton.dataset.endTime = endTime;
+            
+            retryButton.addEventListener('click', () => {
+                retryWaveformLoad(
+                    retryButton.dataset.termId,
+                    retryButton.dataset.audioUrl,
+                    parseFloat(retryButton.dataset.startTime),
+                    parseFloat(retryButton.dataset.endTime)
+                );
+            });
+            
+            errorDiv.appendChild(errorIcon);
+            errorDiv.appendChild(errorText);
+            errorDiv.appendChild(retryButton);
+            waveformContainer.appendChild(errorDiv);
+        }
+    }
 }
 
 /**
