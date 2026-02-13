@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Manual Audio Alignment - Cantonese Anki Generator</title>
+    <title>Cantonese Anki Generator</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
     <!-- 
         WaveSurfer.js library loaded from CDN
@@ -20,13 +20,138 @@
 <body>
     <div id="app">
         <header>
-            <h1>Manual Audio Alignment</h1>
-            <p>Review and adjust audio-term alignments for your Cantonese vocabulary</p>
+            <h1>Cantonese Anki Generator</h1>
+            <p>Create vocabulary flashcards with audio for Cantonese learning</p>
         </header>
         
         <main>
+            <!-- Mode Selection Section -->
+            <section id="mode-selection" class="card">
+                <h2>Choose Your Workflow</h2>
+                <p class="section-description">Select how you want to create your Anki deck</p>
+                
+                <div class="mode-options">
+                    <button id="prepare-mode-btn" class="mode-option-btn">
+                        <span class="mode-icon">📝</span>
+                        <h3>Prepare Spreadsheet</h3>
+                        <p>Start with English terms and automatically generate Cantonese translations and Jyutping romanization</p>
+                        <span class="mode-badge">New</span>
+                    </button>
+                    
+                    <button id="upload-mode-btn" class="mode-option-btn">
+                        <span class="mode-icon">🎵</span>
+                        <h3>Link Spreadsheet + Upload Audio</h3>
+                        <p>Use an existing Google Sheets vocabulary list and align it with audio recordings</p>
+                        <span class="mode-badge">Standard</span>
+                    </button>
+                </div>
+            </section>
+            
+            <!-- Spreadsheet Preparation Interface -->
+            <section id="spreadsheet-prep-section" class="card" style="display: none;">
+                <h2>Prepare Vocabulary Spreadsheet</h2>
+                <p class="section-description">Enter English terms to automatically generate Cantonese translations and Jyutping romanization</p>
+                
+                <!-- Input Interface -->
+                <div class="prep-input-container">
+                    <div class="form-group">
+                        <label for="english-terms-input">
+                            <span class="label-text">English Terms</span>
+                            <span class="label-hint">Enter one term per line (e.g., hello, goodbye, thank you)</span>
+                        </label>
+                        <textarea 
+                            id="english-terms-input" 
+                            class="english-terms-textarea"
+                            placeholder="Enter English terms, one per line:&#10;&#10;hello&#10;goodbye&#10;thank you&#10;good morning&#10;how are you"
+                            rows="10"
+                        ></textarea>
+                    </div>
+                    
+                    <div class="form-actions">
+                        <button id="generate-translations-btn" class="btn btn-primary" disabled>
+                            <span class="btn-icon">✨</span>
+                            Generate Translations
+                        </button>
+                    </div>
+                </div>
+                
+                <!-- Progress Indicator -->
+                <div id="translation-progress" class="translation-progress" style="display: none;">
+                    <div class="progress-header">
+                        <h3>Generating Translations</h3>
+                        <p class="progress-description">Please wait while we translate your terms...</p>
+                    </div>
+                    <div class="progress-bar-container">
+                        <div class="progress-bar">
+                            <div class="progress-fill" id="translation-progress-fill"></div>
+                        </div>
+                        <div class="progress-percentage" id="translation-progress-percentage">0%</div>
+                    </div>
+                    <div class="progress-stats">
+                        <div class="stat-item">
+                            <span class="stat-label">Total:</span>
+                            <span class="stat-value" id="progress-total">0</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">Completed:</span>
+                            <span class="stat-value" id="progress-completed">0</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">Failed:</span>
+                            <span class="stat-value" id="progress-failed">0</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Error Display Area -->
+                <div id="prep-error-display" class="prep-error-display" style="display: none;">
+                    <div class="error-display-header">
+                        <span class="error-display-icon">⚠️</span>
+                        <h4 class="error-display-title">Error</h4>
+                        <button class="error-display-close" onclick="hidePrepError()">×</button>
+                    </div>
+                    <div class="error-display-message" id="prep-error-message"></div>
+                    <div class="error-display-actions" id="prep-error-actions" style="display: none;">
+                        <h5>Suggested Actions:</h5>
+                        <ul id="prep-error-actions-list"></ul>
+                    </div>
+                </div>
+                
+                <!-- Review Table -->
+                <div id="review-table-container" class="review-table-container" style="display: none;">
+                    <div class="review-table-header">
+                        <h3>Review and Edit Translations</h3>
+                        <p class="review-description">Review the generated translations and make any necessary edits. Entries with errors are highlighted.</p>
+                    </div>
+                    
+                    <div class="review-table-wrapper">
+                        <table id="review-table" class="review-table">
+                            <thead>
+                                <tr>
+                                    <th class="col-english">English</th>
+                                    <th class="col-cantonese">Cantonese</th>
+                                    <th class="col-jyutping">Jyutping</th>
+                                    <th class="col-status">Status</th>
+                                </tr>
+                            </thead>
+                            <tbody id="review-table-body">
+                                <!-- Rows will be dynamically inserted here -->
+                            </tbody>
+                        </table>
+                    </div>
+                    
+                    <div class="review-table-actions">
+                        <button id="export-sheet-btn" class="btn btn-success" disabled>
+                            <span class="btn-icon">📊</span>
+                            Generate Google Sheet
+                        </button>
+                        <div id="export-result" class="export-result" style="display: none;"></div>
+                    </div>
+                </div>
+            </section>
+            
             <!-- Two Column Layout: Upload Form + Processing Log -->
-            <div class="upload-container">
+            <div class="upload-container" style="display: none;">
                 <!-- Left Column: File Upload Section -->
                 <section id="upload-section" class="card upload-card">
                     <h2>Upload Files</h2>

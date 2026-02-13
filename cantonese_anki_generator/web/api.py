@@ -488,8 +488,8 @@ def validate_google_url(url: str) -> Tuple[bool, Optional[str], Optional[str], O
             # Try to get document metadata
             service.documents().get(documentId=doc_id).execute()
         else:  # sheets
-            # Build sheets service
-            service = build('sheets', 'v4', credentials=authenticator._credentials)
+            # Get sheets service using public API
+            service = authenticator.get_sheets_service()
             # Try to get spreadsheet metadata
             service.spreadsheets().get(spreadsheetId=doc_id).execute()
         
@@ -2111,3 +2111,366 @@ def download_package(session_id: str, filename: str):
             'success': False,
             'error': f'Failed to download package: {str(e)}'
         }), 500
+
+
+
+# ============================================================================
+# Spreadsheet Preparation Endpoints
+# ============================================================================
+
+@bp.route('/spreadsheet-prep/translate', methods=['POST'])
+def translate_terms():
+    """
+    Translate English terms to Cantonese and generate Jyutping.
+    
+    Request Body:
+        {
+            "terms": ["hello", "goodbye", ...]
+        }
+    
+    Response:
+        {
+            "success": true,
+            "results": [
+                {
+                    "english": "hello",
+                    "cantonese": "你好",
+                    "jyutping": "nei5 hou2",
+                    "success": true
+                },
+                {
+                    "english": "goodbye",
+                    "cantonese": "",
+                    "jyutping": "",
+                    "success": false,
+                    "error": "Translation service unavailable"
+                }
+            ],
+            "summary": {
+                "total": 2,
+                "successful": 1,
+                "failed": 1
+            }
+        }
+    
+    Requirements: 3.1, 3.2, 3.3, 3.4, 4.1, 4.3, 4.4, 8.2
+    """
+    try:
+        # Parse request data
+        data = request.get_json()
+        if not data:
+            logger.warning("No JSON data provided in translate request")
+            response = format_error_response(
+                error_message='No JSON data provided',
+                error_code=ErrorCode.MISSING_DATA,
+                action_required=ActionRequired.RETRY
+            )
+            return jsonify(response), 400
+        
+        terms = data.get('terms', [])
+        
+        if not isinstance(terms, list):
+            logger.warning("Invalid 'terms' field in request - not a list")
+            response = format_error_response(
+                error_message='Invalid "terms" field. Expected a list of English terms.',
+                error_code=ErrorCode.INVALID_INPUT,
+                action_required=ActionRequired.RETRY
+            )
+            return jsonify(response), 400
+        
+        if len(terms) == 0:
+            logger.warning("Empty terms list provided")
+            response = format_error_response(
+                error_message='Empty terms list provided',
+                error_code=ErrorCode.EMPTY_INPUT,
+                action_required=ActionRequired.RETRY
+            )
+            return jsonify(response), 400
+        
+        # Enforce max terms limit to prevent DoS/rate exhaustion
+        max_terms = Config.TRANSLATION_BATCH_SIZE
+        if len(terms) > max_terms:
+            logger.warning(f"Terms list exceeds maximum allowed size: {len(terms)} > {max_terms}")
+            response = format_error_response(
+                error_message=f'Too many terms provided. Maximum allowed is {max_terms} terms per request.',
+                error_code=ErrorCode.INVALID_INPUT,
+                action_required=ActionRequired.RETRY
+            )
+            return jsonify(response), 413  # 413 Payload Too Large
+        
+        # Initialize services
+        from cantonese_anki_generator.spreadsheet_prep.translation_service import GoogleTranslationService
+        from cantonese_anki_generator.spreadsheet_prep.romanization_service import PyCantoneseRomanizationService
+        
+        translation_service = GoogleTranslationService()
+        romanization_service = PyCantoneseRomanizationService()
+        
+        logger.info(f"Translating {len(terms)} terms")
+        
+        # Translate all terms
+        translation_results = translation_service.translate_batch(terms)
+        
+        # Prepare results list
+        results = []
+        successful_count = 0
+        failed_count = 0
+        
+        # For each translation result, generate Jyutping if translation succeeded
+        for trans_result in translation_results:
+            if trans_result.success:
+                # Translation succeeded, now romanize
+                rom_result = romanization_service.romanize(trans_result.cantonese)
+                
+                if rom_result.success:
+                    # Both translation and romanization succeeded
+                    results.append({
+                        'english': trans_result.english,
+                        'cantonese': trans_result.cantonese,
+                        'jyutping': rom_result.jyutping,
+                        'success': True
+                    })
+                    successful_count += 1
+                else:
+                    # Translation succeeded but romanization failed
+                    results.append({
+                        'english': trans_result.english,
+                        'cantonese': trans_result.cantonese,
+                        'jyutping': '',
+                        'success': True,
+                        'romanization_error': rom_result.error
+                    })
+                    successful_count += 1
+            else:
+                # Translation failed
+                results.append({
+                    'english': trans_result.english,
+                    'cantonese': '',
+                    'jyutping': '',
+                    'success': False,
+                    'error': trans_result.error
+                })
+                failed_count += 1
+        
+        logger.info(f"Translation complete: {successful_count} successful, {failed_count} failed")
+        
+        return jsonify({
+            'success': True,
+            'results': results,
+            'summary': {
+                'total': len(terms),
+                'successful': successful_count,
+                'failed': failed_count
+            }
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Translation failed with unexpected error: {e}", exc_info=True)
+        response = format_error_response(
+            error_message=f'Translation failed: {str(e)}',
+            error_code=ErrorCode.PROCESSING_ERROR,
+            action_required=ActionRequired.RETRY
+        )
+        return jsonify(response), 500
+
+
+@bp.route('/spreadsheet-prep/export', methods=['POST'])
+def export_to_sheets():
+    """
+    Export vocabulary entries to Google Sheets.
+    
+    Request Body:
+        {
+            "entries": [
+                {
+                    "english": "hello",
+                    "cantonese": "你好",
+                    "jyutping": "nei5 hou2"
+                }
+            ],
+            "title": "My Vocabulary"  # Optional
+        }
+    
+    Response:
+        {
+            "success": true,
+            "sheet_url": "https://docs.google.com/spreadsheets/d/...",
+            "sheet_id": "abc123..."
+        }
+    
+    Requirements: 6.1, 6.2, 6.4, 6.6, 7.1, 7.2, 7.3
+    """
+    try:
+        # Parse request data
+        data = request.get_json()
+        if not data:
+            logger.warning("No JSON data provided in export request")
+            response = format_error_response(
+                error_message='No JSON data provided',
+                error_code=ErrorCode.MISSING_DATA,
+                action_required=ActionRequired.RETRY
+            )
+            return jsonify(response), 400
+        
+        entries_data = data.get('entries', [])
+        title = data.get('title', 'Cantonese Vocabulary')
+        
+        if not isinstance(entries_data, list):
+            logger.warning("Invalid 'entries' field in request - not a list")
+            response = format_error_response(
+                error_message='Invalid "entries" field. Expected a list of vocabulary entries.',
+                error_code=ErrorCode.INVALID_INPUT,
+                action_required=ActionRequired.RETRY
+            )
+            return jsonify(response), 400
+        
+        if len(entries_data) == 0:
+            logger.warning("Empty entries list provided")
+            response = format_error_response(
+                error_message='Empty entries list provided',
+                error_code=ErrorCode.EMPTY_INPUT,
+                action_required=ActionRequired.RETRY
+            )
+            return jsonify(response), 400
+        
+        # Convert entries data to VocabularyEntry objects
+        from cantonese_anki_generator.models import VocabularyEntry
+        from cantonese_anki_generator.spreadsheet_prep.validation import validate_entries
+        
+        entries = []
+        for i, entry_data in enumerate(entries_data):
+            # Validate that each entry is a dictionary
+            if not isinstance(entry_data, dict):
+                logger.warning(f"Invalid entry at index {i}: expected dict, got {type(entry_data).__name__}")
+                response = format_error_response(
+                    error_message=f'Invalid entry at index {i}: expected object/dict, got {type(entry_data).__name__}. Each entry must be an object with "english", "cantonese", and "jyutping" fields.',
+                    error_code=ErrorCode.INVALID_INPUT,
+                    action_required=ActionRequired.RETRY,
+                    additional_data={
+                        'invalid_index': i,
+                        'invalid_value': str(entry_data),
+                        'expected_format': {'english': 'string', 'cantonese': 'string', 'jyutping': 'string'}
+                    }
+                )
+                return jsonify(response), 400
+            
+            entry = VocabularyEntry(
+                english=entry_data.get('english', ''),
+                cantonese=entry_data.get('cantonese', ''),
+                jyutping=entry_data.get('jyutping', ''),
+                row_index=i
+            )
+            entries.append(entry)
+        
+        # Validate entries
+        validation_errors = validate_entries(entries)
+        
+        if validation_errors:
+            logger.warning(f"Validation failed for {len(validation_errors)} entries")
+            
+            # Format validation errors for response
+            formatted_errors = {}
+            for index, errors in validation_errors.items():
+                formatted_errors[str(index)] = {
+                    'english': entries[index].english,
+                    'cantonese': entries[index].cantonese,
+                    'errors': errors
+                }
+            
+            response = format_error_response(
+                error_message='Validation failed. Some entries have missing required fields.',
+                error_code=ErrorCode.VALIDATION_ERROR,
+                action_required=ActionRequired.FIX_VALIDATION_ERRORS,
+                additional_data={
+                    'validation_errors': formatted_errors,
+                    'error_count': len(validation_errors)
+                }
+            )
+            return jsonify(response), 400
+        
+        # Check authentication before exporting
+        try:
+            authenticator = GoogleDocsAuthenticator(mode='web')
+            token_status = authenticator.get_token_status()
+            
+            if not token_status['valid'] or token_status['expired']:
+                # Tokens are invalid or expired - need authentication
+                logger.warning("Export blocked: authentication required")
+                
+                # Generate authorization URL
+                try:
+                    authorization_url, state_token = authenticator.get_authorization_url()
+                    
+                    error_message = (
+                        "Authentication required to create Google Sheets. "
+                        "Please authenticate first and try again."
+                    )
+                    
+                    return authentication_required_response(
+                        message=error_message,
+                        authorization_url=authorization_url
+                    )
+                    
+                except Exception as e:
+                    logger.error(f"Failed to generate authorization URL: {e}", exc_info=True)
+                    response = format_error_response(
+                        error_message='Authentication required but failed to generate authorization URL.',
+                        error_code=ErrorCode.AUTH_URL_ERROR,
+                        action_required=ActionRequired.CONFIGURE_CREDENTIALS
+                    )
+                    return jsonify(response), 500
+                    
+        except Exception as e:
+            logger.error(f"Authentication check failed: {e}", exc_info=True)
+            response = format_error_response(
+                error_message=f'Failed to check authentication status: {str(e)}',
+                error_code=ErrorCode.AUTH_CHECK_ERROR,
+                action_required=ActionRequired.RETRY
+            )
+            return jsonify(response), 500
+        
+        # Export to Google Sheets
+        from cantonese_anki_generator.spreadsheet_prep.sheet_exporter import SheetExporter
+        
+        logger.info(f"Exporting {len(entries)} entries to Google Sheets")
+        
+        sheet_exporter = SheetExporter(authenticator=authenticator)
+        result = sheet_exporter.create_vocabulary_sheet(entries, title=title)
+        
+        if not result.success:
+            logger.error(f"Sheet export failed: {result.error}")
+            
+            # Check if it's an authentication error
+            if result.error and ('authentication' in result.error.lower() or 'auth' in result.error.lower()):
+                try:
+                    authorization_url, state_token = authenticator.get_authorization_url()
+                    
+                    return authentication_expired_response(
+                        authorization_url=authorization_url
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to get authorization URL: {e}")
+            
+            response = format_error_response(
+                error_message=result.error,
+                error_code=ErrorCode.SHEET_EXPORT_ERROR,
+                action_required=ActionRequired.RETRY
+            )
+            return jsonify(response), 500
+        
+        logger.info(f"Successfully exported to Google Sheets: {result.sheet_url}")
+        
+        return jsonify({
+            'success': True,
+            'sheet_url': result.sheet_url,
+            'sheet_id': result.sheet_id,
+            'message': f'Successfully created spreadsheet with {len(entries)} entries'
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Export failed with unexpected error: {e}", exc_info=True)
+        response = format_error_response(
+            error_message=f'Export failed: {str(e)}',
+            error_code=ErrorCode.PROCESSING_ERROR,
+            action_required=ActionRequired.RETRY
+        )
+        return jsonify(response), 500

@@ -4,6 +4,7 @@
 
 // Application state
 const AppState = {
+    currentMode: null,  // 'prepare' or 'upload'
     sessionId: null,
     currentSession: null,
     alignments: [],
@@ -18,6 +19,12 @@ const AppState = {
     validationState: {
         urlValid: false,
         audioValid: false
+    },
+    // Spreadsheet preparation state
+    spreadsheetPrep: {
+        inputText: '',
+        parsedTerms: [],
+        vocabularyEntries: []
     }
 };
 
@@ -75,6 +82,30 @@ function initApp() {
  */
 function cacheElements() {
     elements = {
+        // Mode selection elements
+        modeSelection: document.getElementById('mode-selection'),
+        prepareModeBtn: document.getElementById('prepare-mode-btn'),
+        uploadModeBtn: document.getElementById('upload-mode-btn'),
+        
+        // Spreadsheet preparation elements
+        spreadsheetPrepSection: document.getElementById('spreadsheet-prep-section'),
+        englishTermsInput: document.getElementById('english-terms-input'),
+        generateTranslationsBtn: document.getElementById('generate-translations-btn'),
+        
+        // Translation progress elements
+        translationProgress: document.getElementById('translation-progress'),
+        translationProgressFill: document.getElementById('translation-progress-fill'),
+        translationProgressPercentage: document.getElementById('translation-progress-percentage'),
+        progressTotal: document.getElementById('progress-total'),
+        progressCompleted: document.getElementById('progress-completed'),
+        progressFailed: document.getElementById('progress-failed'),
+        
+        // Review table elements
+        reviewTableContainer: document.getElementById('review-table-container'),
+        reviewTableBody: document.getElementById('review-table-body'),
+        exportSheetBtn: document.getElementById('export-sheet-btn'),
+        exportResult: document.getElementById('export-result'),
+        
         // Form elements
         uploadForm: document.getElementById('upload-form'),
         docUrlInput: document.getElementById('doc-url'),
@@ -99,7 +130,8 @@ function cacheElements() {
         
         // Section elements
         uploadSection: document.getElementById('upload-section'),
-        alignmentSection: document.getElementById('alignment-section')
+        alignmentSection: document.getElementById('alignment-section'),
+        uploadContainer: document.querySelector('.upload-container')
     };
 }
 
@@ -107,6 +139,33 @@ function cacheElements() {
  * Set up event listeners for form interactions
  */
 function setupEventListeners() {
+    // Mode selection buttons
+    if (elements.prepareModeBtn) {
+        elements.prepareModeBtn.addEventListener('click', handlePrepareModeSelect);
+    }
+    if (elements.uploadModeBtn) {
+        elements.uploadModeBtn.addEventListener('click', handleUploadModeSelect);
+    }
+    
+    // Spreadsheet preparation input
+    if (elements.englishTermsInput) {
+        elements.englishTermsInput.addEventListener('input', handleEnglishTermsInput);
+    }
+    if (elements.generateTranslationsBtn) {
+        elements.generateTranslationsBtn.addEventListener('click', handleGenerateTranslations);
+    }
+    
+    // Export sheet button
+    if (elements.exportSheetBtn) {
+        elements.exportSheetBtn.addEventListener('click', handleExportToSheet);
+    }
+    
+    // Set up event delegation for editable cells (Task 13.3)
+    if (elements.reviewTableBody) {
+        elements.reviewTableBody.addEventListener('input', handleCellEdit);
+        elements.reviewTableBody.addEventListener('blur', handleCellBlur, true);
+    }
+    
     // URL input validation
     elements.docUrlInput.addEventListener('input', debounce(validateUrl, 500));
     elements.docUrlInput.addEventListener('blur', validateUrl);
@@ -116,6 +175,55 @@ function setupEventListeners() {
     
     // Form submission
     elements.uploadForm.addEventListener('submit', handleFormSubmit);
+}
+
+/**
+ * Handle "Prepare Spreadsheet" mode selection
+ * Task 10.2: Navigate to spreadsheet preparation interface
+ * Requirements: 1.2
+ */
+function handlePrepareModeSelect() {
+    console.log('Prepare Spreadsheet mode selected');
+    
+    // Hide mode selection
+    if (elements.modeSelection) {
+        elements.modeSelection.style.display = 'none';
+    }
+    
+    // Show spreadsheet preparation interface
+    if (elements.spreadsheetPrepSection) {
+        elements.spreadsheetPrepSection.style.display = 'block';
+    }
+    
+    // Store mode selection in app state
+    AppState.currentMode = 'prepare';
+    
+    // Focus on the input textarea
+    if (elements.englishTermsInput) {
+        elements.englishTermsInput.focus();
+    }
+}
+
+/**
+ * Handle "Link Spreadsheet + Upload Audio" mode selection
+ * Task 10.2: Navigate to existing upload interface
+ * Requirements: 1.3
+ */
+function handleUploadModeSelect() {
+    console.log('Upload Audio mode selected');
+    
+    // Hide mode selection
+    if (elements.modeSelection) {
+        elements.modeSelection.style.display = 'none';
+    }
+    
+    // Show upload interface
+    if (elements.uploadContainer) {
+        elements.uploadContainer.style.display = 'grid';
+    }
+    
+    // Store mode selection in app state
+    AppState.currentMode = 'upload';
 }
 
 /**
@@ -719,6 +827,271 @@ function hideSuccess() {
 }
 
 /**
+ * Task 14.2: Enhanced error handling for spreadsheet preparation
+ * Requirements: 9.1, 9.2, 9.3, 9.5
+ */
+
+/**
+ * Error message templates with suggested actions
+ * Requirements: 9.1, 9.2, 9.3
+ */
+const ERROR_MESSAGES = {
+    translation_api_unavailable: {
+        message: 'Translation service is currently unavailable. This may be due to network issues or service maintenance.',
+        actions: [
+            'Check your internet connection',
+            'Try again in a few moments',
+            'Manually enter translations for failed terms in the review table'
+        ],
+        type: 'network-error'
+    },
+    auth_required: {
+        message: 'Google Sheets authentication is required to export your vocabulary list.',
+        actions: [
+            'Click the authentication link in the banner above',
+            'Sign in with your Google account',
+            'Grant the requested permissions',
+            'Return to this page and try exporting again'
+        ],
+        type: 'auth-error'
+    },
+    validation_failed: {
+        message: 'Some vocabulary entries have missing required fields and cannot be exported.',
+        actions: [
+            'Review the highlighted entries in the table below',
+            'Fill in missing English or Cantonese text',
+            'Click "Generate Google Sheet" again when ready'
+        ],
+        type: 'validation-error-display'
+    },
+    network_error: {
+        message: 'Network connection error. Unable to reach the server.',
+        actions: [
+            'Check your internet connection',
+            'Verify you can access other websites',
+            'Try again in a few moments',
+            'Your entered data has been preserved'
+        ],
+        type: 'network-error'
+    },
+    export_failed: {
+        message: 'Failed to create Google Sheet. This may be due to permissions or service issues.',
+        actions: [
+            'Verify you have permission to create Google Sheets',
+            'Check if you need to re-authenticate (see banner above)',
+            'Try exporting again',
+            'Your vocabulary data is preserved in the table below'
+        ],
+        type: 'network-error'
+    },
+    generic_error: {
+        message: 'An unexpected error occurred. Please try again.',
+        actions: [
+            'Refresh the page and try again',
+            'Check your internet connection',
+            'If the problem persists, contact support'
+        ],
+        type: 'network-error'
+    }
+};
+
+/**
+ * Show error in the spreadsheet preparation error display area
+ * Requirements: 9.1, 9.2, 9.3
+ * @param {string} errorType - Type of error (key from ERROR_MESSAGES)
+ * @param {string} customMessage - Optional custom error message
+ */
+function showPrepError(errorType, customMessage = null) {
+    const errorDisplay = document.getElementById('prep-error-display');
+    const errorMessage = document.getElementById('prep-error-message');
+    const errorActions = document.getElementById('prep-error-actions');
+    const errorActionsList = document.getElementById('prep-error-actions-list');
+    
+    if (!errorDisplay || !errorMessage || !errorActions || !errorActionsList) {
+        console.error('Error display elements not found');
+        // Fallback to toast
+        showError(customMessage || 'An error occurred');
+        return;
+    }
+    
+    // Get error template or use generic
+    const errorTemplate = ERROR_MESSAGES[errorType] || ERROR_MESSAGES.generic_error;
+    
+    // Set message
+    errorMessage.textContent = customMessage || errorTemplate.message;
+    
+    // Set actions
+    if (errorTemplate.actions && errorTemplate.actions.length > 0) {
+        errorActionsList.innerHTML = '';
+        errorTemplate.actions.forEach(action => {
+            const li = document.createElement('li');
+            li.textContent = action;
+            errorActionsList.appendChild(li);
+        });
+        errorActions.style.display = 'block';
+    } else {
+        errorActions.style.display = 'none';
+    }
+    
+    // Set error type class
+    errorDisplay.className = 'prep-error-display ' + errorTemplate.type;
+    
+    // Show error display
+    errorDisplay.style.display = 'block';
+    
+    // Scroll to error display
+    errorDisplay.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    
+    console.log(`Spreadsheet prep error displayed: ${errorType}`);
+}
+
+/**
+ * Hide the spreadsheet preparation error display
+ */
+function hidePrepError() {
+    const errorDisplay = document.getElementById('prep-error-display');
+    if (errorDisplay) {
+        errorDisplay.style.display = 'none';
+    }
+}
+
+/**
+ * Handle translation API errors
+ * Requirements: 9.1, 9.5
+ * @param {Error} error - Error object
+ */
+function handleTranslationError(error) {
+    console.error('Translation error:', error);
+    
+    // Preserve user data (Requirement 9.5)
+    // Data is already in AppState.spreadsheetPrep.inputText
+    
+    // Determine error type
+    let errorType = 'generic_error';
+    let customMessage = null;
+    
+    if (error.message.includes('Network error') || error.message.includes('Failed to fetch')) {
+        errorType = 'network_error';
+    } else if (error.message.includes('Translation service') || error.message.includes('unavailable')) {
+        errorType = 'translation_api_unavailable';
+    } else {
+        customMessage = error.message;
+    }
+    
+    // Show error display
+    showPrepError(errorType, customMessage);
+    
+    // Also show toast for immediate feedback
+    showError(error.message || 'Translation failed', {
+        retryAction: handleGenerateTranslations,
+        retryLabel: 'Retry Translation',
+        autoHide: false
+    });
+}
+
+/**
+ * Handle authentication errors
+ * Requirements: 9.2
+ * @param {Object} errorData - Error response data from API
+ */
+function handlePrepAuthenticationError(errorData) {
+    console.error('Authentication error:', errorData);
+    
+    // Show authentication banner if authorization URL provided
+    if (errorData.authorization_url) {
+        showAuthenticationBanner(errorData.authorization_url);
+    }
+    
+    // Show error display
+    showPrepError('auth_required', errorData.error);
+    
+    // Also show toast
+    showError(errorData.error || 'Authentication required', { autoHide: false });
+}
+
+/**
+ * Handle validation errors
+ * Requirements: 9.1, 9.5
+ * @param {Object} validation - Validation result with errors
+ */
+function handleValidationError(validation) {
+    console.error('Validation errors:', validation.errors);
+    
+    // Preserve user data (Requirement 9.5)
+    // Data is already in AppState.spreadsheetPrep.vocabularyEntries
+    
+    // Highlight errors in table
+    highlightValidationErrors(validation.errors);
+    
+    // Show error display
+    const errorCount = validation.errors.length;
+    const customMessage = `Cannot export: ${errorCount} ${errorCount === 1 ? 'entry has' : 'entries have'} missing required fields. Please review the highlighted entries below.`;
+    showPrepError('validation_failed', customMessage);
+}
+
+/**
+ * Handle export errors
+ * Requirements: 9.1, 9.2, 9.5
+ * @param {Error} error - Error object
+ * @param {number} statusCode - HTTP status code (if available)
+ */
+function handleExportError(error, statusCode = null) {
+    console.error('Export error:', error, 'Status:', statusCode);
+    
+    // Preserve user data (Requirement 9.5)
+    // Data is already in AppState.spreadsheetPrep.vocabularyEntries
+    
+    // Determine error type
+    let errorType = 'export_failed';
+    let customMessage = null;
+    
+    if (statusCode === 401 || error.message.includes('Authentication')) {
+        errorType = 'auth_required';
+    } else if (error.message.includes('Network error') || error.message.includes('Failed to fetch')) {
+        errorType = 'network_error';
+    } else {
+        customMessage = error.message;
+    }
+    
+    // Show error display
+    showPrepError(errorType, customMessage);
+    
+    // Also show toast for immediate feedback
+    showError(error.message || 'Export failed', {
+        retryAction: handleExportToSheet,
+        retryLabel: 'Retry Export',
+        autoHide: false
+    });
+}
+
+/**
+ * Handle network errors
+ * Requirements: 9.3, 9.5
+ * @param {Error} error - Error object
+ * @param {Function} retryAction - Function to call for retry
+ */
+function handleNetworkError(error, retryAction = null) {
+    console.error('Network error:', error);
+    
+    // Preserve user data (Requirement 9.5)
+    // Data is preserved in AppState
+    
+    // Show error display
+    showPrepError('network_error', error.message);
+    
+    // Show toast with retry option if provided
+    if (retryAction) {
+        showError(error.message || 'Network error', {
+            retryAction: retryAction,
+            retryLabel: 'Retry',
+            autoHide: false
+        });
+    } else {
+        showError(error.message || 'Network error', { autoHide: false });
+    }
+}
+
+/**
  * Debounce function to limit API calls
  */
 function debounce(func, wait) {
@@ -998,6 +1371,7 @@ function setupBackButton() {
 
 /**
  * Return to upload screen and reset the application state
+ * Updated to support mode selection (Task 10.2)
  */
 function returnToUploadScreen() {
     // Confirm if user wants to leave (if there are unsaved changes)
@@ -1017,12 +1391,713 @@ function returnToUploadScreen() {
     // Clear the processing log
     clearLog();
     
-    // Do a full page reload to root URL (no session parameter)
-    window.location.href = window.location.origin + window.location.pathname;
+    // Hide alignment section
+    if (elements.alignmentSection) {
+        elements.alignmentSection.style.display = 'none';
+    }
+    
+    // Hide upload container
+    if (elements.uploadContainer) {
+        elements.uploadContainer.style.display = 'none';
+    }
+    
+    // Hide spreadsheet prep section
+    if (elements.spreadsheetPrepSection) {
+        elements.spreadsheetPrepSection.style.display = 'none';
+    }
+    
+    // Show mode selection
+    if (elements.modeSelection) {
+        elements.modeSelection.style.display = 'block';
+    }
+    
+    // Reset app state
+    AppState.currentMode = null;
+    AppState.sessionId = null;
+    AppState.currentSession = null;
+    AppState.alignments = [];
+    
+    // Reset spreadsheet preparation state
+    AppState.spreadsheetPrep = {
+        inputText: '',
+        parsedTerms: [],
+        vocabularyEntries: []
+    };
+    
+    // Clear URL parameters
+    window.history.pushState({}, '', window.location.pathname);
+}
+
+/**
+ * Task 11.2: Spreadsheet Preparation Input Interface Logic
+ */
+
+/**
+ * Handle text input changes in English terms textarea
+ * Requirements: 2.2, 2.3, 2.4, 2.5
+ */
+function handleEnglishTermsInput(event) {
+    const inputText = event.target.value;
+    
+    // Store input text in app state
+    AppState.spreadsheetPrep.inputText = inputText;
+    
+    // Update textarea styling based on content
+    if (inputText.trim()) {
+        elements.englishTermsInput.classList.add('has-content');
+    } else {
+        elements.englishTermsInput.classList.remove('has-content');
+    }
+    
+    // Enable/disable generate button based on input
+    const hasValidInput = inputText.trim().length > 0;
+    if (elements.generateTranslationsBtn) {
+        elements.generateTranslationsBtn.disabled = !hasValidInput;
+    }
+}
+
+/**
+ * Parse input text into individual English terms
+ * Requirements: 2.2, 2.3, 2.4, 2.5
+ * @param {string} inputText - Multi-line input text
+ * @returns {string[]} Array of parsed terms
+ */
+function parseEnglishTerms(inputText) {
+    // Split by newlines
+    const lines = inputText.split('\n');
+    
+    // Filter out empty lines and trim whitespace
+    const terms = lines
+        .map(line => line.trim())
+        .filter(line => line.length > 0);
+    
+    return terms;
+}
+
+/**
+ * Handle Generate Translations button click
+ * Requirements: 2.2, 2.3, 2.4, 2.5, 3.1
+ * Task 12.2: Show progress indicator when translation starts
+ */
+async function handleGenerateTranslations() {
+    const inputText = AppState.spreadsheetPrep.inputText;
+    
+    // Parse input into terms
+    const terms = parseEnglishTerms(inputText);
+    
+    if (terms.length === 0) {
+        showError('Please enter at least one English term');
+        return;
+    }
+    
+    // Store parsed terms
+    AppState.spreadsheetPrep.parsedTerms = terms;
+    
+    console.log(`Generating translations for ${terms.length} terms:`, terms);
+    
+    // Disable button and show loading state
+    const generateBtn = elements.generateTranslationsBtn;
+    if (generateBtn) {
+        generateBtn.disabled = true;
+        generateBtn.innerHTML = '<span class="btn-icon">⏳</span> Generating...';
+    }
+    
+    // Show progress indicator (Requirements: 8.1)
+    showTranslationProgress(terms.length);
+    
+    try {
+        // Call translation API
+        const response = await fetchWithRetry(`${API_BASE}/spreadsheet-prep/translate`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                terms: terms
+            })
+        });
+        
+        if (!response.ok) {
+            // Try to parse JSON error response, fallback to text if not JSON
+            let errorMessage = 'Translation failed';
+            try {
+                const contentType = response.headers.get('content-type');
+                if (contentType && contentType.includes('application/json')) {
+                    const errorData = await response.json();
+                    errorMessage = errorData.error || errorMessage;
+                } else {
+                    const errorText = await response.text();
+                    errorMessage = errorText || `${response.status} ${response.statusText}`;
+                }
+            } catch (parseError) {
+                // If parsing fails, use status text
+                errorMessage = `${response.status} ${response.statusText}`;
+                console.error('Failed to parse error response:', parseError);
+            }
+            throw new Error(errorMessage);
+        }
+        
+        const data = await response.json();
+        
+        // Update progress to 100% (Requirements: 8.2)
+        updateTranslationProgress(data.summary.total, data.summary.successful, data.summary.failed);
+        
+        // Store vocabulary entries
+        AppState.spreadsheetPrep.vocabularyEntries = data.results;
+        
+        // Show success message with summary (Requirements: 8.3)
+        const summary = data.summary;
+        const message = `Generated ${summary.successful} translations (${summary.failed} failed)`;
+        showSuccess(message);
+        
+        console.log('Translation results:', data);
+        
+        // Hide progress indicator after a short delay (Requirements: 8.3)
+        setTimeout(() => {
+            hideTranslationProgress();
+            
+            // Display results in review table (Task 13.2)
+            renderReviewTable(data.results);
+        }, 2000);
+        
+    } catch (error) {
+        console.error('Translation error:', error);
+        hideTranslationProgress();
+        
+        // Use enhanced error handling (Task 14.2)
+        handleTranslationError(error);
+    } finally {
+        // Re-enable button
+        if (generateBtn) {
+            generateBtn.disabled = false;
+            generateBtn.innerHTML = '<span class="btn-icon">✨</span> Generate Translations';
+        }
+    }
+}
+
+/**
+ * Task 12.2: Progress tracking functions for translation
+ */
+
+/**
+ * Show translation progress indicator
+ * Requirements: 8.1, 8.4
+ * @param {number} total - Total number of terms to translate
+ */
+function showTranslationProgress(total) {
+    const progressContainer = document.getElementById('translation-progress');
+    if (!progressContainer) {
+        console.error('Translation progress container not found');
+        return;
+    }
+    
+    // Initialize progress display
+    updateTranslationProgress(total, 0, 0);
+    
+    // Show the progress container
+    progressContainer.style.display = 'block';
+    
+    console.log(`Translation progress indicator shown for ${total} terms`);
+}
+
+/**
+ * Update translation progress indicator
+ * Requirements: 8.2, 8.5
+ * @param {number} total - Total number of terms
+ * @param {number} completed - Number of successfully completed translations
+ * @param {number} failed - Number of failed translations
+ */
+function updateTranslationProgress(total, completed, failed) {
+    // Update progress bar
+    const progressFill = document.getElementById('translation-progress-fill');
+    const progressPercentage = document.getElementById('translation-progress-percentage');
+    
+    if (progressFill && progressPercentage) {
+        const processed = completed + failed;
+        const percent = total > 0 ? Math.round((processed / total) * 100) : 0;
+        
+        progressFill.style.width = `${percent}%`;
+        progressPercentage.textContent = `${percent}%`;
+    }
+    
+    // Update stats
+    const totalElement = document.getElementById('progress-total');
+    const completedElement = document.getElementById('progress-completed');
+    const failedElement = document.getElementById('progress-failed');
+    
+    if (totalElement) totalElement.textContent = total;
+    if (completedElement) completedElement.textContent = completed;
+    if (failedElement) failedElement.textContent = failed;
+    
+    console.log(`Translation progress updated: ${completed}/${total} completed, ${failed} failed`);
+}
+
+/**
+ * Hide translation progress indicator
+ * Requirements: 8.3
+ */
+function hideTranslationProgress() {
+    const progressContainer = document.getElementById('translation-progress');
+    if (progressContainer) {
+        progressContainer.style.display = 'none';
+        console.log('Translation progress indicator hidden');
+    }
+}
+
+/**
+ * Task 13.2: Review Table Rendering Functions
+ */
+
+/**
+ * Render the review table with vocabulary entries
+ * Requirements: 3.5, 5.1, 5.5
+ * @param {Array} results - Array of translation results
+ */
+function renderReviewTable(results) {
+    if (!elements.reviewTableBody || !elements.reviewTableContainer) {
+        console.error('Review table elements not found');
+        return;
+    }
+    
+    // Clear existing rows
+    elements.reviewTableBody.innerHTML = '';
+    
+    // Render each entry
+    results.forEach((entry, index) => {
+        const row = createReviewTableRow(entry, index);
+        elements.reviewTableBody.appendChild(row);
+    });
+    
+    // Show the review table container
+    elements.reviewTableContainer.style.display = 'block';
+    
+    // Enable export button if there are valid entries
+    updateExportButtonState();
+    
+    console.log(`Review table rendered with ${results.length} entries`);
+}
+
+/**
+ * Create a single row for the review table
+ * Requirements: 3.5, 5.1, 5.5
+ * @param {Object} entry - Vocabulary entry with translation results
+ * @param {number} index - Row index
+ * @returns {HTMLElement} Table row element
+ */
+function createReviewTableRow(entry, index) {
+    const row = document.createElement('tr');
+    row.dataset.index = index;
+    
+    // Add error class if translation or romanization failed
+    if (!entry.success || entry.error) {
+        row.classList.add('has-error');
+    }
+    
+    // English column (editable)
+    const englishCell = document.createElement('td');
+    englishCell.className = 'col-english';
+    const englishDiv = document.createElement('div');
+    englishDiv.className = 'editable-cell';
+    englishDiv.contentEditable = 'true';
+    englishDiv.dataset.field = 'english';
+    englishDiv.dataset.index = index;
+    englishDiv.textContent = entry.english || '';
+    
+    // Add empty class if no content
+    if (!entry.english) {
+        englishDiv.classList.add('empty');
+    }
+    
+    englishCell.appendChild(englishDiv);
+    
+    // Cantonese column (editable)
+    const cantoneseCell = document.createElement('td');
+    cantoneseCell.className = 'col-cantonese';
+    const cantoneseDiv = document.createElement('div');
+    cantoneseDiv.className = 'editable-cell';
+    cantoneseDiv.contentEditable = 'true';
+    cantoneseDiv.dataset.field = 'cantonese';
+    cantoneseDiv.dataset.index = index;
+    cantoneseDiv.textContent = entry.cantonese || '';
+    
+    // Add empty class if no content
+    if (!entry.cantonese) {
+        cantoneseDiv.classList.add('empty');
+    }
+    
+    // Show error message if translation failed
+    if (entry.error && !entry.cantonese) {
+        const errorMsg = document.createElement('div');
+        errorMsg.className = 'error-message';
+        errorMsg.textContent = entry.error;
+        cantoneseCell.appendChild(cantoneseDiv);
+        cantoneseCell.appendChild(errorMsg);
+    } else {
+        cantoneseCell.appendChild(cantoneseDiv);
+    }
+    
+    // Jyutping column (editable)
+    const jyutpingCell = document.createElement('td');
+    jyutpingCell.className = 'col-jyutping';
+    const jyutpingDiv = document.createElement('div');
+    jyutpingDiv.className = 'editable-cell';
+    jyutpingDiv.contentEditable = 'true';
+    jyutpingDiv.dataset.field = 'jyutping';
+    jyutpingDiv.dataset.index = index;
+    jyutpingDiv.textContent = entry.jyutping || '';
+    
+    // Add empty class if no content
+    if (!entry.jyutping) {
+        jyutpingDiv.classList.add('empty');
+    }
+    
+    jyutpingCell.appendChild(jyutpingDiv);
+    
+    // Status column
+    const statusCell = document.createElement('td');
+    statusCell.className = 'col-status';
+    const statusIndicator = document.createElement('div');
+    statusIndicator.className = entry.success ? 'status-indicator success' : 'status-indicator error';
+    
+    const statusIcon = document.createElement('span');
+    statusIcon.className = 'status-indicator-icon';
+    statusIcon.textContent = entry.success ? '✓' : '✗';
+    
+    const statusText = document.createElement('span');
+    statusText.textContent = entry.success ? 'Success' : 'Failed';
+    
+    statusIndicator.appendChild(statusIcon);
+    statusIndicator.appendChild(statusText);
+    statusCell.appendChild(statusIndicator);
+    
+    // Assemble row
+    row.appendChild(englishCell);
+    row.appendChild(cantoneseCell);
+    row.appendChild(jyutpingCell);
+    row.appendChild(statusCell);
+    
+    return row;
+}
+
+/**
+ * Update export button state based on validation
+ * Requirements: 7.3
+ */
+function updateExportButtonState() {
+    if (!elements.exportSheetBtn) return;
+    
+    const entries = AppState.spreadsheetPrep.vocabularyEntries;
+    
+    // Check if all entries have required fields
+    const allValid = entries.every(entry => 
+        entry.english && entry.english.trim() && 
+        entry.cantonese && entry.cantonese.trim()
+    );
+    
+    elements.exportSheetBtn.disabled = !allValid || entries.length === 0;
+}
+
+/**
+ * Task 13.3: Cell Editing Logic
+ */
+
+/**
+ * Handle cell edit events
+ * Requirements: 5.2, 5.3, 5.4, 5.6
+ * @param {Event} event - Input event from editable cell
+ */
+function handleCellEdit(event) {
+    const target = event.target;
+    
+    // Check if the target is an editable cell
+    if (!target.classList.contains('editable-cell')) {
+        return;
+    }
+    
+    const field = target.dataset.field;
+    const index = parseInt(target.dataset.index, 10);
+    const value = target.textContent.trim();
+    
+    // Update the vocabulary entry immediately (Requirement 5.4)
+    if (AppState.spreadsheetPrep.vocabularyEntries[index]) {
+        AppState.spreadsheetPrep.vocabularyEntries[index][field] = value;
+        
+        console.log(`Updated entry ${index} ${field}: "${value}"`);
+        
+        // Remove empty class if content was added
+        if (value) {
+            target.classList.remove('empty');
+        } else {
+            target.classList.add('empty');
+        }
+        
+        // Revalidate and update export button state (Requirement 5.6)
+        updateExportButtonState();
+    }
+}
+
+/**
+ * Handle cell blur events (when user leaves the cell)
+ * Requirements: 5.2, 5.3, 5.6
+ * @param {Event} event - Blur event from editable cell
+ */
+function handleCellBlur(event) {
+    const target = event.target;
+    
+    // Check if the target is an editable cell
+    if (!target.classList.contains('editable-cell')) {
+        return;
+    }
+    
+    const field = target.dataset.field;
+    const index = parseInt(target.dataset.index, 10);
+    const value = target.textContent.trim();
+    
+    // Ensure the value is saved (in case input event didn't fire)
+    if (AppState.spreadsheetPrep.vocabularyEntries[index]) {
+        AppState.spreadsheetPrep.vocabularyEntries[index][field] = value;
+        
+        // Validate the entry
+        const entry = AppState.spreadsheetPrep.vocabularyEntries[index];
+        const isValid = entry.english && entry.english.trim() && 
+                       entry.cantonese && entry.cantonese.trim();
+        
+        // Update row styling based on validation
+        const row = target.closest('tr');
+        if (row) {
+            if (!isValid) {
+                row.classList.add('has-error');
+            } else {
+                // Remove error class when entry becomes valid
+                // Update success flag to reflect current validation state
+                entry.success = true;
+                row.classList.remove('has-error');
+            }
+        }
+        
+        // Update export button state
+        updateExportButtonState();
+    }
+}
+
+/**
+ * Task 13.5: Validation and Export Logic
+ */
+
+/**
+ * Validate all vocabulary entries
+ * Requirements: 7.1, 7.2, 7.3, 7.5
+ * @returns {Object} Validation result with isValid flag and errors array
+ */
+function validateVocabularyEntries() {
+    const entries = AppState.spreadsheetPrep.vocabularyEntries;
+    const errors = [];
+    
+    entries.forEach((entry, index) => {
+        const validationErrors = [];
+        
+        // Check for empty English term (Requirement 7.1)
+        if (!entry.english || !entry.english.trim()) {
+            validationErrors.push('English term is required');
+        }
+        
+        // Check for empty Cantonese text (Requirement 7.2)
+        if (!entry.cantonese || !entry.cantonese.trim()) {
+            validationErrors.push('Cantonese text is required');
+        }
+        
+        if (validationErrors.length > 0) {
+            errors.push({
+                index: index,
+                english: entry.english,
+                errors: validationErrors
+            });
+        }
+    });
+    
+    return {
+        isValid: errors.length === 0,
+        errors: errors
+    };
+}
+
+/**
+ * Highlight entries with validation errors
+ * Requirements: 7.4
+ * @param {Array} errors - Array of validation errors with indices
+ */
+function highlightValidationErrors(errors) {
+    // Clear existing error highlights
+    const rows = elements.reviewTableBody.querySelectorAll('tr');
+    rows.forEach(row => {
+        row.classList.remove('validation-error');
+    });
+    
+    // Highlight rows with errors
+    errors.forEach(error => {
+        const row = elements.reviewTableBody.querySelector(`tr[data-index="${error.index}"]`);
+        if (row) {
+            row.classList.add('validation-error', 'has-error');
+            
+            // Scroll to first error
+            if (error === errors[0]) {
+                row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+        }
+    });
+}
+
+/**
+ * Handle export to Google Sheets
+ * Requirements: 7.3, 7.4, 7.5, 6.4, 6.6
+ */
+async function handleExportToSheet() {
+    // Hide any previous errors
+    hidePrepError();
+    
+    // Validate entries (Requirement 7.3)
+    const validation = validateVocabularyEntries();
+    
+    if (!validation.isValid) {
+        // Use enhanced validation error handling (Task 14.2)
+        handleValidationError(validation);
+        return;
+    }
+    
+    // Disable button and show loading state
+    const exportBtn = elements.exportSheetBtn;
+    if (exportBtn) {
+        exportBtn.disabled = true;
+        exportBtn.innerHTML = '<span class="btn-icon">⏳</span> Creating Sheet...';
+    }
+    
+    try {
+        // Call export API (Requirement 6.4)
+        const response = await fetchWithRetry(`${API_BASE}/spreadsheet-prep/export`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                entries: AppState.spreadsheetPrep.vocabularyEntries.map(entry => ({
+                    english: entry.english,
+                    cantonese: entry.cantonese,
+                    jyutping: entry.jyutping || ''
+                }))
+            })
+        });
+        
+        if (!response.ok) {
+            // Try to parse JSON error response, fallback to text if not JSON
+            let errorMessage = 'Export failed';
+            let errorData = null;
+            
+            try {
+                const contentType = response.headers.get('content-type');
+                if (contentType && contentType.includes('application/json')) {
+                    errorData = await response.json();
+                    errorMessage = errorData.error || errorMessage;
+                } else {
+                    const errorText = await response.text();
+                    errorMessage = errorText || `${response.status} ${response.statusText}`;
+                }
+            } catch (parseError) {
+                // If parsing fails, use status text
+                errorMessage = `${response.status} ${response.statusText}`;
+                console.error('Failed to parse error response:', parseError);
+            }
+            
+            // Check for authentication error (Task 14.2)
+            if (response.status === 401 || (errorData && errorData.error_code === 'AUTHENTICATION_REQUIRED')) {
+                if (errorData) {
+                    handlePrepAuthenticationError(errorData);
+                }
+                throw new Error('Authentication required');
+            }
+            
+            throw new Error(errorMessage);
+        }
+        
+        const data = await response.json();
+        
+        // Display sheet URL on success (Requirement 6.6)
+        if (elements.exportResult) {
+            elements.exportResult.className = 'export-result success';
+            
+            // Clear existing content
+            elements.exportResult.innerHTML = '';
+            
+            // Create success message
+            const successText = document.createElement('strong');
+            successText.textContent = '✓ Google Sheet Created Successfully!';
+            elements.exportResult.appendChild(successText);
+            
+            // Add line break
+            elements.exportResult.appendChild(document.createElement('br'));
+            
+            // Validate and sanitize the sheet URL
+            let sheetUrl = data.sheet_url || '';
+            
+            // Ensure URL is from Google Sheets (prevent javascript: and other malicious schemes)
+            if (sheetUrl && (sheetUrl.startsWith('https://docs.google.com/spreadsheets/') || 
+                             sheetUrl.startsWith('https://sheets.google.com/'))) {
+                // Create anchor element safely
+                const anchor = document.createElement('a');
+                anchor.href = sheetUrl;
+                anchor.textContent = 'Open Google Sheet';
+                anchor.target = '_blank';
+                anchor.rel = 'noopener noreferrer';
+                elements.exportResult.appendChild(anchor);
+            } else {
+                // Invalid or suspicious URL - display as text only
+                const urlText = document.createTextNode('Sheet URL: ' + sheetUrl);
+                elements.exportResult.appendChild(urlText);
+            }
+            
+            elements.exportResult.style.display = 'block';
+        }
+        
+        showSuccess('Google Sheet created successfully!');
+        
+        console.log('Export successful:', data);
+        
+    } catch (error) {
+        console.error('Export error:', error);
+        
+        // Use enhanced error handling (Task 14.2)
+        // Determine status code if available
+        let statusCode = null;
+        if (error.message.includes('Authentication')) {
+            statusCode = 401;
+        }
+        handleExportError(error, statusCode);
+        
+        // Display error in export result area as well
+        if (elements.exportResult) {
+            elements.exportResult.className = 'export-result error';
+            elements.exportResult.innerHTML = `
+                <strong>✗ Export Failed</strong><br>
+                ${error.message}
+            `;
+            elements.exportResult.style.display = 'block';
+        }
+        
+    } finally {
+        // Re-enable button
+        if (exportBtn) {
+            exportBtn.disabled = false;
+            exportBtn.innerHTML = '<span class="btn-icon">📊</span> Generate Google Sheet';
+        }
+    }
 }
 
 // Initialize when DOM is ready
 document.addEventListener('DOMContentLoaded', initApp);
+
+// Export functions to global scope for HTML onclick handlers
+window.hidePrepError = hidePrepError;
+window.hideError = hideError;
+window.hideSuccess = hideSuccess;
 
 // Additional functionality will be implemented in subsequent tasks:
 // - Waveform rendering
