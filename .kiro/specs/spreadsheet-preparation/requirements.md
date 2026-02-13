@@ -53,8 +53,7 @@ The Spreadsheet Preparation Tool is a feature that enables users to create prope
 4. **Timeout Handling**: THE System SHALL enforce a 30-second timeout per translation request (single or batch)
 5. **Retry Strategy**: THE System SHALL NOT automatically retry failed translations; failures SHALL be marked as errors and displayed to the user
 6. **Error Isolation**: THE System SHALL continue processing remaining terms when individual translations fail (failure of one term does not stop the batch)
-7. **API Selection**: THE System SHALL use Google Cloud Translation API (google-cloud-translate library) for English to Traditional Chinese (zh-TW) translation, with GOOGLE_APPLICATION_CREDENTIALS environment variable for authentication
-8. **Translation Limitation**: THE System translates to Traditional Chinese (Mandarin), not Cantonese, as Google Cloud Translation API does not support Cantonese ('yue'); users SHALL review and edit translations for Cantonese-specific vocabulary via the interactive review interface
+7. **API Selection**: THE System SHALL use Google Cloud Translation API (google-cloud-translate library) for English to Cantonese ('yue') translation, with GOOGLE_APPLICATION_CREDENTIALS environment variable for authentication
 
 #### Acceptance Criteria
 

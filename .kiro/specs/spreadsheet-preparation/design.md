@@ -584,14 +584,13 @@ Integration tests verify component interactions:
 The implementation uses **Google Cloud Translation API** (google-cloud-translate library):
 
 1. **Credentials**: Requires `GOOGLE_APPLICATION_CREDENTIALS` environment variable pointing to service account key file
-2. **Target Language**: Uses 'zh-TW' (Traditional Chinese - Taiwan)
-3. **Important Limitation**: Produces Mandarin in Traditional characters, NOT Cantonese
-   - Google Cloud Translation API does not support Cantonese ('yue') as a target language
-   - Users must review and edit translations for Cantonese-specific vocabulary
-   - The interactive review interface allows manual correction of translations
-4. **Client**: Uses `translate_v2.Client()` for simple translation operations
-5. **Fallback**: Falls back to mock translations if credentials not configured or library not installed
-6. **Error Handling**: Gracefully handles API failures with clear error messages
+2. **Target Language**: Uses 'yue' (Cantonese)
+   - As of November 2024, Google Cloud Translation API supports Cantonese ('yue') as part of its 189-language expansion
+   - Translates directly to Cantonese, not Mandarin
+3. **Client**: Uses `translate_v2.Client()` for simple translation operations
+4. **Fallback**: Falls back to mock translations if credentials not configured or library not installed
+5. **Error Handling**: Gracefully handles API failures with clear error messages
+6. **Review Interface**: Users can review and edit translations for accuracy via the interactive table
 
 **Setup Instructions**:
 ```bash
@@ -603,10 +602,10 @@ export GOOGLE_APPLICATION_CREDENTIALS="/path/to/service-account-key.json"
 ```
 
 **Translation Workflow**:
-1. System translates English to Traditional Chinese (Mandarin)
+1. System translates English to Cantonese using 'yue' language code
 2. User reviews translations in interactive table
-3. User manually edits to correct for Cantonese-specific vocabulary
-4. System generates Jyutping romanization from edited Cantonese text
+3. User can manually edit translations if needed for accuracy
+4. System generates Jyutping romanization from Cantonese text
 
 ### Romanization Implementation
 

@@ -17,11 +17,9 @@ class GoogleTranslationService(TranslationService):
     """
     Translation service using Google Cloud Translation API.
     
-    Note: Translates to Traditional Chinese (zh-TW), which produces Mandarin
-    in Traditional characters, not Cantonese. Google Cloud Translation API
-    does not support Cantonese ('yue') as a target language.
-    
-    Users should review and edit translations for Cantonese-specific vocabulary.
+    Translates English to Cantonese using the 'yue' language code.
+    As of November 2024, Google Cloud Translation API supports Cantonese
+    as part of its 189-language expansion.
     
     Requires google-cloud-translate library and valid credentials.
     Set GOOGLE_APPLICATION_CREDENTIALS environment variable to your service account key file.
@@ -48,15 +46,10 @@ class GoogleTranslationService(TranslationService):
             
             # Initialize the Translation client
             self.translator = translate.Client()
-            # Traditional Chinese (Taiwan) - produces Mandarin in Traditional characters, not Cantonese
-            # Note: Google Cloud Translation API does not support Cantonese ('yue') as a target language
-            self.target_language = 'zh-TW'
+            # Cantonese language code - supported as of November 2024
+            self.target_language = 'yue'
             self.use_real_api = True
-            self.logger.info("Google Cloud Translation service initialized successfully")
-            self.logger.warning(
-                "Translation uses Traditional Chinese (zh-TW) which produces Mandarin, not Cantonese. "
-                "Users should review and edit translations for Cantonese-specific vocabulary."
-            )
+            self.logger.info("Google Cloud Translation service initialized successfully for Cantonese (yue)")
             
         except ImportError:
             self.logger.warning(
@@ -90,7 +83,7 @@ class GoogleTranslationService(TranslationService):
         
         if self.use_real_api and self.translator:
             try:
-                # Translate to Traditional Chinese (Taiwan) - Mandarin in Traditional characters (not Cantonese)
+                # Translate to Cantonese
                 result = self.translator.translate(
                     english_term,
                     target_language=self.target_language,
