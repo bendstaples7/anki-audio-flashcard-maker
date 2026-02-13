@@ -1401,6 +1401,11 @@ function returnToUploadScreen() {
         elements.uploadContainer.style.display = 'none';
     }
     
+    // Hide spreadsheet prep section
+    if (elements.spreadsheetPrepSection) {
+        elements.spreadsheetPrepSection.style.display = 'none';
+    }
+    
     // Show mode selection
     if (elements.modeSelection) {
         elements.modeSelection.style.display = 'block';
@@ -1411,6 +1416,13 @@ function returnToUploadScreen() {
     AppState.sessionId = null;
     AppState.currentSession = null;
     AppState.alignments = [];
+    
+    // Reset spreadsheet preparation state
+    AppState.spreadsheetPrep = {
+        inputText: '',
+        parsedTerms: [],
+        vocabularyEntries: []
+    };
     
     // Clear URL parameters
     window.history.pushState({}, '', window.location.pathname);
@@ -1978,12 +1990,37 @@ async function handleExportToSheet() {
         // Display sheet URL on success (Requirement 6.6)
         if (elements.exportResult) {
             elements.exportResult.className = 'export-result success';
-            elements.exportResult.innerHTML = `
-                <strong>✓ Google Sheet Created Successfully!</strong><br>
-                <a href="${data.sheet_url}" target="_blank" rel="noopener noreferrer">
-                    Open Google Sheet
-                </a>
-            `;
+            
+            // Clear existing content
+            elements.exportResult.innerHTML = '';
+            
+            // Create success message
+            const successText = document.createElement('strong');
+            successText.textContent = '✓ Google Sheet Created Successfully!';
+            elements.exportResult.appendChild(successText);
+            
+            // Add line break
+            elements.exportResult.appendChild(document.createElement('br'));
+            
+            // Validate and sanitize the sheet URL
+            let sheetUrl = data.sheet_url || '';
+            
+            // Ensure URL is from Google Sheets (prevent javascript: and other malicious schemes)
+            if (sheetUrl && (sheetUrl.startsWith('https://docs.google.com/spreadsheets/') || 
+                             sheetUrl.startsWith('https://sheets.google.com/'))) {
+                // Create anchor element safely
+                const anchor = document.createElement('a');
+                anchor.href = sheetUrl;
+                anchor.textContent = 'Open Google Sheet';
+                anchor.target = '_blank';
+                anchor.rel = 'noopener noreferrer';
+                elements.exportResult.appendChild(anchor);
+            } else {
+                // Invalid or suspicious URL - display as text only
+                const urlText = document.createTextNode('Sheet URL: ' + sheetUrl);
+                elements.exportResult.appendChild(urlText);
+            }
+            
             elements.exportResult.style.display = 'block';
         }
         

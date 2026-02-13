@@ -12,7 +12,7 @@ from cantonese_anki_generator.models import RomanizationResult
 from cantonese_anki_generator.spreadsheet_prep.services import RomanizationService
 
 
-class PhonemizerRomanizationService(RomanizationService):
+class PyCantoneseRomanizationService(RomanizationService):
     """
     Romanization service using pycantonese for Cantonese Jyutping.
     

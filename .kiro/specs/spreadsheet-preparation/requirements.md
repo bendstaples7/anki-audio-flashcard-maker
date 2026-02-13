@@ -45,13 +45,26 @@ The Spreadsheet Preparation Tool is a feature that enables users to create prope
 
 **User Story:** As a user, I want the system to automatically generate Cantonese translations, so that I don't have to manually look up each term.
 
+#### Operational Constraints
+
+1. **Batch Processing**: THE System SHALL support batch translation via `translate_batch()` method with a maximum of 50 terms per batch
+2. **Single-Term Fallback**: THE System SHALL support single-term translation via `translate()` method for individual requests
+3. **Rate Limiting**: THE System SHALL process terms sequentially to avoid overwhelming the Translation_API (no concurrent requests)
+4. **Timeout Handling**: THE System SHALL enforce a 30-second timeout per translation request (single or batch)
+5. **Retry Strategy**: THE System SHALL NOT automatically retry failed translations; failures SHALL be marked as errors and displayed to the user
+6. **Error Isolation**: THE System SHALL continue processing remaining terms when individual translations fail (failure of one term does not stop the batch)
+7. **API Selection**: THE System SHALL use Google Cloud Translation API (google-cloud-translate library) for English to Traditional Chinese (zh-TW) translation, with GOOGLE_APPLICATION_CREDENTIALS environment variable for authentication
+8. **Translation Limitation**: THE System translates to Traditional Chinese (Mandarin), not Cantonese, as Google Cloud Translation API does not support Cantonese ('yue'); users SHALL review and edit translations for Cantonese-specific vocabulary via the interactive review interface
+
 #### Acceptance Criteria
 
-1. WHEN a user clicks the "Generate" button, THE System SHALL send each English term to the Translation_API
+1. WHEN a user clicks the "Generate" button, THE System SHALL send English terms to the Translation_API using `translate_batch()` with up to 50 terms per batch
 2. FOR each English_Term, THE System SHALL retrieve the corresponding Cantonese_Text from the Translation_API
-3. WHEN the Translation_API returns a translation, THE System SHALL store it with the corresponding English_Term
-4. IF the Translation_API fails for a specific term, THEN THE System SHALL mark that entry with an error indicator and continue processing remaining terms
-5. WHEN all translations are complete or failed, THE System SHALL display the results in the Review_Table
+3. WHEN the Translation_API returns a translation, THE System SHALL store it with the corresponding English_Term and map it correctly in the Review_Table
+4. IF the Translation_API fails for a specific term (timeout, network error, or API error), THEN THE System SHALL mark that entry with an error indicator and continue processing remaining terms
+5. WHEN all translations are complete or failed, THE System SHALL display the results in the Review_Table with proper English_Term to Cantonese_Text mapping
+6. THE System SHALL enforce the 30-second timeout constraint per translation request
+7. THE System SHALL process terms in the order they were entered by the user
 
 ### Requirement 4: Automatic Jyutping Generation
 

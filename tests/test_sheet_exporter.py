@@ -37,10 +37,20 @@ class TestSheetExporter:
         mock_service.spreadsheets().create().execute.return_value = mock_spreadsheet
         mock_service.spreadsheets().values().update().execute.return_value = {}
         
+        # Mock the get() call for format validation
+        mock_get_result = {
+            'values': [
+                ['English', 'Cantonese', 'Jyutping'],
+                ['hello', '你好', 'nei5 hou2'],
+                ['goodbye', '再見', 'zoi3 gin3']
+            ]
+        }
+        mock_service.spreadsheets().values().get().execute.return_value = mock_get_result
+        
         # Create exporter with mocked authenticator
         mock_auth = Mock()
         mock_auth.authenticate.return_value = True
-        mock_auth._credentials = Mock()
+        mock_auth.get_sheets_service.return_value = mock_service
         
         exporter = SheetExporter(authenticator=mock_auth)
         
@@ -81,7 +91,7 @@ class TestSheetExporter:
         # Create exporter
         mock_auth = Mock()
         mock_auth.authenticate.return_value = True
-        mock_auth._credentials = Mock()
+        mock_auth.get_sheets_service.return_value = mock_service
         
         exporter = SheetExporter(authenticator=mock_auth)
         
@@ -117,7 +127,7 @@ class TestSheetExporter:
         # Create exporter
         mock_auth = Mock()
         mock_auth.authenticate.return_value = True
-        mock_auth._credentials = Mock()
+        mock_auth.get_sheets_service.return_value = mock_service
         
         exporter = SheetExporter(authenticator=mock_auth)
         
@@ -146,7 +156,7 @@ class TestSheetExporter:
         # Create exporter
         mock_auth = Mock()
         mock_auth.authenticate.return_value = True
-        mock_auth._credentials = Mock()
+        mock_auth.get_sheets_service.return_value = mock_service
         
         exporter = SheetExporter(authenticator=mock_auth)
         
@@ -167,7 +177,7 @@ class TestSheetExporter:
         # Create exporter
         mock_auth = Mock()
         mock_auth.authenticate.return_value = True
-        mock_auth._credentials = Mock()
+        mock_auth.get_sheets_service.return_value = mock_service
         
         exporter = SheetExporter(authenticator=mock_auth)
         

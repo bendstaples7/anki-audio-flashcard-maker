@@ -9,9 +9,9 @@ from cantonese_anki_generator.models import TranslationResult, RomanizationResul
 
 def test_translate_endpoint_with_valid_input(client):
     """Test translate endpoint with valid English terms."""
-    # Mock the services at their import location
-    with patch('cantonese_anki_generator.spreadsheet_prep.translation_service.MockTranslationService') as mock_trans, \
-         patch('cantonese_anki_generator.spreadsheet_prep.romanization_service.PhonemizerRomanizationService') as mock_rom:
+    # Mock the services at their source module location
+    with patch('cantonese_anki_generator.spreadsheet_prep.translation_service.GoogleTranslationService') as mock_trans, \
+         patch('cantonese_anki_generator.spreadsheet_prep.romanization_service.PyCantoneseRomanizationService') as mock_rom:
         
         # Setup mock translation service
         mock_trans_instance = Mock()
@@ -64,9 +64,26 @@ def test_translate_endpoint_with_missing_terms(client):
     assert data['success'] is False
 
 
+def test_translate_endpoint_with_too_many_terms(client):
+    """Test translate endpoint with terms exceeding max limit."""
+    from cantonese_anki_generator.config import Config
+    
+    # Create a list exceeding the max batch size
+    too_many_terms = ['term' + str(i) for i in range(Config.TRANSLATION_BATCH_SIZE + 1)]
+    
+    response = client.post('/api/spreadsheet-prep/translate', json={
+        'terms': too_many_terms
+    })
+    
+    assert response.status_code == 413  # Payload Too Large
+    data = response.get_json()
+    assert data['success'] is False
+    assert 'maximum' in data['error'].lower() or 'too many' in data['error'].lower()
+
+
 def test_export_endpoint_with_valid_entries(client):
     """Test export endpoint with valid vocabulary entries."""
-    with patch('cantonese_anki_generator.processors.google_docs_auth.GoogleDocsAuthenticator') as mock_auth, \
+    with patch('cantonese_anki_generator.web.api.GoogleDocsAuthenticator') as mock_auth, \
          patch('cantonese_anki_generator.spreadsheet_prep.sheet_exporter.SheetExporter') as mock_exporter:
         
         # Setup mock authenticator
@@ -104,7 +121,7 @@ def test_export_endpoint_with_valid_entries(client):
 
 def test_export_endpoint_with_validation_errors(client):
     """Test export endpoint with entries missing required fields."""
-    with patch('cantonese_anki_generator.processors.google_docs_auth.GoogleDocsAuthenticator') as mock_auth:
+    with patch('cantonese_anki_generator.web.api.GoogleDocsAuthenticator') as mock_auth:
         
         # Setup mock authenticator
         mock_auth_instance = Mock()
@@ -130,7 +147,7 @@ def test_export_endpoint_with_validation_errors(client):
 
 def test_export_endpoint_requires_authentication(client):
     """Test export endpoint requires valid authentication."""
-    with patch('cantonese_anki_generator.processors.google_docs_auth.GoogleDocsAuthenticator') as mock_auth:
+    with patch('cantonese_anki_generator.web.api.GoogleDocsAuthenticator') as mock_auth:
         
         # Setup mock authenticator with invalid tokens
         mock_auth_instance = Mock()

@@ -62,9 +62,6 @@ class Config:
     # Spreadsheet preparation settings
     TRANSLATION_API_TIMEOUT = 30  # seconds
     TRANSLATION_BATCH_SIZE = 50  # max terms per batch
-    ROMANIZATION_BACKEND = 'espeak'  # phonemizer backend
-    ROMANIZATION_LANGUAGE = 'yue'  # Cantonese language code
-    ROMANIZATION_PRESERVE_PUNCTUATION = True
     SPREADSHEET_EXPORT_TIMEOUT = 30  # seconds
     
     @classmethod

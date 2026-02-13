@@ -19,8 +19,9 @@ class VocabularyEntry:
     romanization_error: Optional[str] = None
     
     def is_valid(self) -> bool:
-        """Check if entry has all required fields."""
-        return bool(self.english and self.cantonese)
+        """Check if entry has all required fields with non-whitespace content."""
+        return bool(self.english and self.english.strip() and 
+                   self.cantonese and self.cantonese.strip())
     
     def has_errors(self) -> bool:
         """Check if entry has any errors."""

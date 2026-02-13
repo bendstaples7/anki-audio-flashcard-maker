@@ -488,8 +488,8 @@ def validate_google_url(url: str) -> Tuple[bool, Optional[str], Optional[str], O
             # Try to get document metadata
             service.documents().get(documentId=doc_id).execute()
         else:  # sheets
-            # Build sheets service
-            service = build('sheets', 'v4', credentials=authenticator._credentials)
+            # Get sheets service using public API
+            service = authenticator.get_sheets_service()
             # Try to get spreadsheet metadata
             service.spreadsheets().get(spreadsheetId=doc_id).execute()
         
@@ -2169,10 +2169,10 @@ def translate_terms():
         
         terms = data.get('terms', [])
         
-        if not terms or not isinstance(terms, list):
-            logger.warning("Invalid or missing 'terms' field in request")
+        if not isinstance(terms, list):
+            logger.warning("Invalid 'terms' field in request - not a list")
             response = format_error_response(
-                error_message='Invalid or missing "terms" field. Expected a list of English terms.',
+                error_message='Invalid "terms" field. Expected a list of English terms.',
                 error_code=ErrorCode.INVALID_INPUT,
                 action_required=ActionRequired.RETRY
             )
@@ -2187,12 +2187,23 @@ def translate_terms():
             )
             return jsonify(response), 400
         
+        # Enforce max terms limit to prevent DoS/rate exhaustion
+        max_terms = Config.TRANSLATION_BATCH_SIZE
+        if len(terms) > max_terms:
+            logger.warning(f"Terms list exceeds maximum allowed size: {len(terms)} > {max_terms}")
+            response = format_error_response(
+                error_message=f'Too many terms provided. Maximum allowed is {max_terms} terms per request.',
+                error_code=ErrorCode.INVALID_INPUT,
+                action_required=ActionRequired.RETRY
+            )
+            return jsonify(response), 413  # 413 Payload Too Large
+        
         # Initialize services
         from cantonese_anki_generator.spreadsheet_prep.translation_service import GoogleTranslationService
-        from cantonese_anki_generator.spreadsheet_prep.romanization_service import PhonemizerRomanizationService
+        from cantonese_anki_generator.spreadsheet_prep.romanization_service import PyCantoneseRomanizationService
         
         translation_service = GoogleTranslationService()
-        romanization_service = PhonemizerRomanizationService()
+        romanization_service = PyCantoneseRomanizationService()
         
         logger.info(f"Translating {len(terms)} terms")
         
@@ -2303,10 +2314,10 @@ def export_to_sheets():
         entries_data = data.get('entries', [])
         title = data.get('title', 'Cantonese Vocabulary')
         
-        if not entries_data or not isinstance(entries_data, list):
-            logger.warning("Invalid or missing 'entries' field in request")
+        if not isinstance(entries_data, list):
+            logger.warning("Invalid 'entries' field in request - not a list")
             response = format_error_response(
-                error_message='Invalid or missing "entries" field. Expected a list of vocabulary entries.',
+                error_message='Invalid "entries" field. Expected a list of vocabulary entries.',
                 error_code=ErrorCode.INVALID_INPUT,
                 action_required=ActionRequired.RETRY
             )
@@ -2414,15 +2425,15 @@ def export_to_sheets():
             logger.error(f"Sheet export failed: {result.error}")
             
             # Check if it's an authentication error
-            if 'authentication' in result.error.lower() or 'auth' in result.error.lower():
+            if result.error and ('authentication' in result.error.lower() or 'auth' in result.error.lower()):
                 try:
                     authorization_url, state_token = authenticator.get_authorization_url()
                     
                     return authentication_expired_response(
                         authorization_url=authorization_url
                     )
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.error(f"Failed to get authorization URL: {e}")
             
             response = format_error_response(
                 error_message=result.error,

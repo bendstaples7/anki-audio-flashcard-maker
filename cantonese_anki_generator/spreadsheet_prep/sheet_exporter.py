@@ -2,6 +2,7 @@
 Sheet exporter service for creating Google Sheets with vocabulary data.
 """
 
+import logging
 from typing import List, Optional
 from cantonese_anki_generator.models import VocabularyEntry, SheetCreationResult
 from cantonese_anki_generator.processors.google_docs_auth import (
@@ -22,6 +23,7 @@ class SheetExporter:
         """
         self.authenticator = authenticator or GoogleDocsAuthenticator()
         self._service = None
+        self.logger = logging.getLogger(__name__)
     
     def _get_service(self):
         """Get authenticated Google Sheets service."""
@@ -29,9 +31,7 @@ class SheetExporter:
             if not self.authenticator.authenticate():
                 raise GoogleDocsAuthError("Failed to authenticate with Google Sheets API")
             
-            # Import here to avoid circular imports
-            from googleapiclient.discovery import build
-            self._service = build('sheets', 'v4', credentials=self.authenticator._credentials)
+            self._service = self.authenticator.get_sheets_service()
         return self._service
     
     def create_vocabulary_sheet(
@@ -90,6 +90,16 @@ class SheetExporter:
                 valueInputOption='RAW',
                 body=body
             ).execute()
+            
+            # Validate format compatibility with parser
+            if not self.format_for_parser_compatibility(sheet_id):
+                self.logger.error(
+                    f"Sheet {sheet_id} format validation failed - may not be compatible with parser"
+                )
+                return SheetCreationResult(
+                    success=False,
+                    error="Sheet created but format validation failed. The sheet may not be compatible with the parser."
+                )
             
             return SheetCreationResult(
                 success=True,
@@ -164,5 +174,6 @@ class SheetExporter:
             # Format is compatible
             return True
             
-        except Exception:
+        except Exception as e:
+            self.logger.error(f"Format validation failed: {e}")
             return False

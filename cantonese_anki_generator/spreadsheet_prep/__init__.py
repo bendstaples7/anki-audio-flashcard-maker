@@ -7,7 +7,7 @@ from cantonese_anki_generator.spreadsheet_prep.services import (
     RomanizationService
 )
 from cantonese_anki_generator.spreadsheet_prep.romanization_service import (
-    PhonemizerRomanizationService
+    PyCantoneseRomanizationService
 )
 from cantonese_anki_generator.spreadsheet_prep.sheet_exporter import (
     SheetExporter
@@ -22,7 +22,7 @@ from cantonese_anki_generator.spreadsheet_prep.validation import (
 __all__ = [
     'TranslationService',
     'RomanizationService',
-    'PhonemizerRomanizationService',
+    'PyCantoneseRomanizationService',
     'SheetExporter',
     'parse_input',
     'validate_entries'

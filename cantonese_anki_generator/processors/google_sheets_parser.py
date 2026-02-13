@@ -32,9 +32,7 @@ class GoogleSheetsParser:
             if not self.authenticator.authenticate():
                 raise GoogleDocsAuthError("Failed to authenticate with Google Sheets API")
             
-            # Import here to avoid circular imports
-            from googleapiclient.discovery import build
-            self._service = build('sheets', 'v4', credentials=self.authenticator._credentials)
+            self._service = self.authenticator.get_sheets_service()
         return self._service
     
     def extract_spreadsheet_id(self, sheets_url: str) -> str:

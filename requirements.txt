@@ -15,7 +15,7 @@ google-auth-httplib2>=0.1.0
 google-api-python-client>=2.0.0
 
 # Translation API
-googletrans==4.0.0rc1
+google-cloud-translate>=3.0.0
 
 # Cantonese Jyutping romanization
 pycantonese>=3.4.0

@@ -21,10 +21,11 @@ This feature integrates seamlessly with the existing web UI and leverages the cu
                             ↓
 ┌─────────────────────────────────────────────────────────────┐
 │                      API Layer (Flask)                       │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
-│  │ /api/        │  │ /api/        │  │ /api/        │      │
-│  │ translate    │  │ romanize     │  │ export-sheet │      │
-│  └──────────────┘  └──────────────┘  └──────────────┘      │
+│  ┌────────────────────────────────┐  ┌──────────────┐      │
+│  │ /api/spreadsheet-prep/         │  │ /api/        │      │
+│  │ translate                       │  │ spreadsheet- │      │
+│  │ (includes romanization)         │  │ prep/export  │      │
+│  └────────────────────────────────┘  └──────────────┘      │
 └─────────────────────────────────────────────────────────────┘
                             ↓
 ┌─────────────────────────────────────────────────────────────┐
@@ -38,7 +39,7 @@ This feature integrates seamlessly with the existing web UI and leverages the cu
 ┌─────────────────────────────────────────────────────────────┐
 │                   External Services                          │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
-│  │ Translation  │  │ Phonemizer   │  │ Google       │      │
+│  │ Translation  │  │ pycantonese  │  │ Google       │      │
 │  │ API          │  │ Library      │  │ Sheets API   │      │
 │  └──────────────┘  └──────────────┘  └──────────────┘      │
 └─────────────────────────────────────────────────────────────┘
@@ -247,7 +248,7 @@ class RomanizationService:
     """Handles Cantonese to Jyutping romanization."""
     
     def __init__(self):
-        # Initialize phonemizer library
+        # Initialize pycantonese library
         pass
     
     def romanize(self, cantonese_text: str) -> RomanizationResult:
@@ -434,7 +435,7 @@ Following the existing error handling patterns in `errors.py`:
 
 1. **INPUT_VALIDATION**: Invalid English term format, empty input
 2. **TRANSLATION_SERVICE**: API unavailable, rate limiting, invalid response
-3. **ROMANIZATION_SERVICE**: Phonemizer failure, unsupported characters
+3. **ROMANIZATION_SERVICE**: pycantonese library failure, unsupported characters
 4. **AUTHENTICATION**: Google Sheets API auth failure
 5. **SHEET_EXPORT**: Sheet creation failure, formatting failure
 6. **NETWORK**: Connection timeout, service unreachable
@@ -580,24 +581,52 @@ Integration tests verify component interactions:
 
 ### Translation API Selection
 
-The design is API-agnostic, but recommended options:
+The implementation uses **Google Cloud Translation API** (google-cloud-translate library):
 
-1. **Google Cloud Translation API**: Supports Cantonese (zh-HK), requires API key
-2. **Azure Translator**: Supports Cantonese, requires subscription
-3. **DeepL API**: High quality, check Cantonese support
-4. **Fallback**: Manual entry if API unavailable
+1. **Credentials**: Requires `GOOGLE_APPLICATION_CREDENTIALS` environment variable pointing to service account key file
+2. **Target Language**: Uses 'zh-TW' (Traditional Chinese - Taiwan)
+3. **Important Limitation**: Produces Mandarin in Traditional characters, NOT Cantonese
+   - Google Cloud Translation API does not support Cantonese ('yue') as a target language
+   - Users must review and edit translations for Cantonese-specific vocabulary
+   - The interactive review interface allows manual correction of translations
+4. **Client**: Uses `translate_v2.Client()` for simple translation operations
+5. **Fallback**: Falls back to mock translations if credentials not configured or library not installed
+6. **Error Handling**: Gracefully handles API failures with clear error messages
+
+**Setup Instructions**:
+```bash
+# Install the library
+pip install google-cloud-translate
+
+# Set credentials environment variable
+export GOOGLE_APPLICATION_CREDENTIALS="/path/to/service-account-key.json"
+```
+
+**Translation Workflow**:
+1. System translates English to Traditional Chinese (Mandarin)
+2. User reviews translations in interactive table
+3. User manually edits to correct for Cantonese-specific vocabulary
+4. System generates Jyutping romanization from edited Cantonese text
 
 ### Romanization Implementation
 
-Use the existing `phonemizer` library (already in dependencies):
+Use the `pycantonese` library for accurate Cantonese Jyutping with tone numbers:
 
 ```python
-from phonemizer import phonemize
-from phonemizer.backend import EspeakBackend
+import pycantonese
 
-backend = EspeakBackend('yue', preserve_punctuation=True)
-jyutping = phonemize(cantonese_text, backend=backend)
+# Convert Cantonese text to Jyutping
+jyutping_data = pycantonese.characters_to_jyutping(cantonese_text)
+
+# Extract jyutping romanizations
+jyutping_list = [jyutping for char, jyutping in jyutping_data if jyutping]
+jyutping = ' '.join(jyutping_list)
 ```
+
+**Why pycantonese instead of phonemizer:**
+- `phonemizer` with eSpeak backend outputs IPA (International Phonetic Alphabet), not Jyutping
+- `pycantonese` is specifically designed for Cantonese and outputs authentic Jyutping with tone numbers (1-6)
+- Example: 你好 → "nei5 hou2" (Jyutping) vs "nei˨˩hou˨˩" (IPA from eSpeak)
 
 ### Google Sheets Format
 

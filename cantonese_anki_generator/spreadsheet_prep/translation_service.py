@@ -15,10 +15,17 @@ from cantonese_anki_generator.spreadsheet_prep.services import TranslationServic
 
 class GoogleTranslationService(TranslationService):
     """
-    Translation service using Google Translate via googletrans library.
+    Translation service using Google Cloud Translation API.
     
-    This is a free service that doesn't require an API key.
-    Falls back to mock implementation if googletrans is not available.
+    Note: Translates to Traditional Chinese (zh-TW), which produces Mandarin
+    in Traditional characters, not Cantonese. Google Cloud Translation API
+    does not support Cantonese ('yue') as a target language.
+    
+    Users should review and edit translations for Cantonese-specific vocabulary.
+    
+    Requires google-cloud-translate library and valid credentials.
+    Set GOOGLE_APPLICATION_CREDENTIALS environment variable to your service account key file.
+    Falls back to mock implementation if API is not available.
     """
     
     def __init__(self):
@@ -26,19 +33,40 @@ class GoogleTranslationService(TranslationService):
         self.logger = logging.getLogger(__name__)
         
         try:
-            from googletrans import Translator
-            self.translator = Translator()
+            from google.cloud import translate_v2 as translate
+            
+            # Check for credentials
+            credentials_path = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS')
+            if not credentials_path:
+                self.logger.warning(
+                    "GOOGLE_APPLICATION_CREDENTIALS not set. Using mock translations. "
+                    "Set environment variable to your service account key file path."
+                )
+                self.use_real_api = False
+                self.translator = None
+                return
+            
+            # Initialize the Translation client
+            self.translator = translate.Client()
+            # Traditional Chinese (Taiwan) - produces Mandarin in Traditional characters, not Cantonese
+            # Note: Google Cloud Translation API does not support Cantonese ('yue') as a target language
+            self.target_language = 'zh-TW'
             self.use_real_api = True
-            self.logger.info("Google Translation service initialized successfully")
+            self.logger.info("Google Cloud Translation service initialized successfully")
+            self.logger.warning(
+                "Translation uses Traditional Chinese (zh-TW) which produces Mandarin, not Cantonese. "
+                "Users should review and edit translations for Cantonese-specific vocabulary."
+            )
+            
         except ImportError:
             self.logger.warning(
-                "googletrans library not installed. Using mock translations. "
-                "Install with: pip install googletrans==4.0.0-rc1"
+                "google-cloud-translate library not installed. Using mock translations. "
+                "Install with: pip install google-cloud-translate"
             )
             self.use_real_api = False
             self.translator = None
         except Exception as e:
-            self.logger.error(f"Failed to initialize Google Translate: {e}")
+            self.logger.error(f"Failed to initialize Google Cloud Translation: {e}")
             self.use_real_api = False
             self.translator = None
     
@@ -62,16 +90,16 @@ class GoogleTranslationService(TranslationService):
         
         if self.use_real_api and self.translator:
             try:
-                # Translate to Traditional Chinese (Hong Kong) for Cantonese
+                # Translate to Traditional Chinese (Taiwan) - Mandarin in Traditional characters (not Cantonese)
                 result = self.translator.translate(
                     english_term,
-                    src='en',
-                    dest='zh-tw'  # Traditional Chinese
+                    target_language=self.target_language,
+                    source_language='en'
                 )
                 
                 return TranslationResult(
                     english=english_term,
-                    cantonese=result.text,
+                    cantonese=result['translatedText'],
                     success=True,
                     confidence=0.9
                 )

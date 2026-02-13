@@ -562,6 +562,24 @@ class GoogleDocsAuthenticator:
         
         return self._service
     
+    def get_sheets_service(self) -> 'googleapiclient.discovery.Resource':
+        """
+        Get authenticated Google Sheets API service.
+        
+        Returns:
+            Google Sheets API service object
+            
+        Raises:
+            RuntimeError: If authentication has not been completed
+        """
+        if not self._credentials or not self._credentials.valid:
+            raise RuntimeError("Authentication required. Call authenticate() first.")
+        
+        # Build and return a new Sheets service
+        # Note: We don't cache this like _service because different parts of the app
+        # may need independent Sheets service instances
+        return build('sheets', 'v4', credentials=self._credentials)
+    
     def test_connection(self) -> bool:
         """
         Test the API connection by making a simple request.

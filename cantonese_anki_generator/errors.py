@@ -657,16 +657,16 @@ class ErrorHandler:
         """Handle romanization service errors."""
         error_str = str(error).lower()
         
-        if 'phonemizer' in error_str or 'espeak' in error_str:
+        if 'pycantonese' in error_str:
             return ProcessingError(
                 category=ErrorCategory.AUDIO_PROCESSING,
                 severity=ErrorSeverity.ERROR,
                 message="Romanization service initialization failed",
-                details=f"Phonemizer library error: {error}",
+                details=f"pycantonese library error: {error}",
                 suggested_actions=[
-                    "Ensure phonemizer library is installed correctly",
-                    "Check that espeak-ng is installed on your system",
-                    "Verify Cantonese (yue) language support is available",
+                    "Ensure pycantonese library is installed correctly: pip install pycantonese",
+                    "Verify pycantonese version is 3.4.0 or higher",
+                    "Check that the library can access Cantonese character data",
                     "Manually enter Jyutping for failed entries"
                 ],
                 error_code="ROM_001",
