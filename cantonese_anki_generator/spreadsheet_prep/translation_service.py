@@ -32,6 +32,9 @@ class GoogleTranslationService(TranslationService):
         
         try:
             from google.cloud import translate_v2 as translate
+            import requests
+            from requests.adapters import HTTPAdapter
+            from cantonese_anki_generator.config import Config
             
             # Check for credentials
             credentials_path = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS')
@@ -44,12 +47,28 @@ class GoogleTranslationService(TranslationService):
                 self.translator = None
                 return
             
-            # Initialize the Translation client
-            self.translator = translate.Client()
+            # Create a custom HTTP session with timeout
+            # This enforces the 30s timeout requirement (Requirement 3.4)
+            class TimeoutHTTPAdapter(HTTPAdapter):
+                def __init__(self, timeout, *args, **kwargs):
+                    self.timeout = timeout
+                    super().__init__(*args, **kwargs)
+                
+                def send(self, request, **kwargs):
+                    kwargs['timeout'] = kwargs.get('timeout') or self.timeout
+                    return super().send(request, **kwargs)
+            
+            http_session = requests.Session()
+            adapter = TimeoutHTTPAdapter(timeout=Config.TRANSLATION_API_TIMEOUT)
+            http_session.mount('https://', adapter)
+            http_session.mount('http://', adapter)
+            
+            # Initialize the Translation client with custom HTTP session
+            self.translator = translate.Client(_http=http_session)
             # Cantonese language code - supported as of November 2024
             self.target_language = 'yue'
             self.use_real_api = True
-            self.logger.info("Google Cloud Translation service initialized successfully for Cantonese (yue)")
+            self.logger.info(f"Google Cloud Translation service initialized successfully for Cantonese (yue) with {Config.TRANSLATION_API_TIMEOUT}s timeout")
             
         except ImportError:
             self.logger.warning(
