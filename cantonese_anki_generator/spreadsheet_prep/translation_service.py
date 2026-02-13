@@ -137,14 +137,29 @@ class GoogleTranslationService(TranslationService):
         """
         Translate multiple terms efficiently.
         
+        Maximum batch size is 50 terms. Larger batches will raise ValueError.
+        
         Args:
-            terms: List of English terms
+            terms: List of English terms (max 50)
             
         Returns:
             List of TranslationResult objects
+            
+        Raises:
+            ValueError: If terms list exceeds 50 items
         """
         if not terms:
             return []
+        
+        # Enforce maximum batch size (Requirement 3.1)
+        from cantonese_anki_generator.config import Config
+        max_batch_size = Config.TRANSLATION_BATCH_SIZE
+        
+        if len(terms) > max_batch_size:
+            raise ValueError(
+                f"Batch size {len(terms)} exceeds maximum allowed size of {max_batch_size} terms. "
+                f"Please split your request into smaller batches."
+            )
         
         # Process each term individually to ensure error isolation
         # (failures in one term don't affect others)
@@ -200,14 +215,29 @@ class MockTranslationService(TranslationService):
         """
         Translate multiple terms efficiently.
         
+        Maximum batch size is 50 terms. Larger batches will raise ValueError.
+        
         Args:
-            terms: List of English terms
+            terms: List of English terms (max 50)
             
         Returns:
             List of TranslationResult objects
+            
+        Raises:
+            ValueError: If terms list exceeds 50 items
         """
         if not terms:
             return []
+        
+        # Enforce maximum batch size (Requirement 3.1)
+        from cantonese_anki_generator.config import Config
+        max_batch_size = Config.TRANSLATION_BATCH_SIZE
+        
+        if len(terms) > max_batch_size:
+            raise ValueError(
+                f"Batch size {len(terms)} exceeds maximum allowed size of {max_batch_size} terms. "
+                f"Please split your request into smaller batches."
+            )
         
         # Process each term individually to ensure error isolation
         # (failures in one term don't affect others)

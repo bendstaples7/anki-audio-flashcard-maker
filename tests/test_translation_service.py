@@ -57,12 +57,27 @@ class MockTranslationService(TranslationService):
         """
         Mock batch translate method.
         
+        Maximum batch size is 50 terms. Larger batches will raise ValueError.
+        
         Args:
-            terms: List of English terms
+            terms: List of English terms (max 50)
             
         Returns:
             List of TranslationResult objects
+            
+        Raises:
+            ValueError: If terms list exceeds 50 items
         """
+        # Enforce maximum batch size (same as production code)
+        from cantonese_anki_generator.config import Config
+        max_batch_size = Config.TRANSLATION_BATCH_SIZE
+        
+        if len(terms) > max_batch_size:
+            raise ValueError(
+                f"Batch size {len(terms)} exceeds maximum allowed size of {max_batch_size} terms. "
+                f"Please split your request into smaller batches."
+            )
+        
         return [self.translate(term) for term in terms]
 
 
@@ -265,3 +280,34 @@ class TestTranslationServiceUnitTests:
         assert len(results) == 3
         assert all(r.success for r in results)
         assert all(r.cantonese for r in results)
+    
+    def test_batch_size_limit_enforced(self):
+        """Test that translate_batch enforces the 50-term limit."""
+        from cantonese_anki_generator.config import Config
+        
+        # Create a batch that exceeds the limit
+        too_many_terms = [f"term{i}" for i in range(Config.TRANSLATION_BATCH_SIZE + 1)]
+        service = MockTranslationService()
+        
+        # Should raise ValueError
+        with pytest.raises(ValueError) as exc_info:
+            service.translate_batch(too_many_terms)
+        
+        # Check error message
+        error_message = str(exc_info.value)
+        assert "exceeds maximum" in error_message.lower()
+        assert str(Config.TRANSLATION_BATCH_SIZE) in error_message
+    
+    def test_batch_at_size_limit_succeeds(self):
+        """Test that translate_batch accepts exactly 50 terms."""
+        from cantonese_anki_generator.config import Config
+        
+        # Create a batch at the exact limit
+        max_terms = [f"term{i}" for i in range(Config.TRANSLATION_BATCH_SIZE)]
+        service = MockTranslationService()
+        
+        # Should succeed without raising
+        results = service.translate_batch(max_terms)
+        
+        assert len(results) == Config.TRANSLATION_BATCH_SIZE
+        assert all(r.success for r in results)
