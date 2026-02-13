@@ -32,7 +32,8 @@ class GoogleTranslationService(TranslationService):
         
         try:
             from google.cloud import translate_v2 as translate
-            import requests
+            from google.auth import default
+            from google.auth.transport.requests import AuthorizedSession
             from requests.adapters import HTTPAdapter
             from cantonese_anki_generator.config import Config
             
@@ -47,7 +48,10 @@ class GoogleTranslationService(TranslationService):
                 self.translator = None
                 return
             
-            # Create a custom HTTP session with timeout
+            # Load credentials
+            credentials, project = default()
+            
+            # Create a custom HTTP adapter with timeout
             # This enforces the 30s timeout requirement (Requirement 3.4)
             class TimeoutHTTPAdapter(HTTPAdapter):
                 def __init__(self, timeout, *args, **kwargs):
@@ -58,12 +62,14 @@ class GoogleTranslationService(TranslationService):
                     kwargs['timeout'] = kwargs.get('timeout') or self.timeout
                     return super().send(request, **kwargs)
             
-            http_session = requests.Session()
+            # Create an AuthorizedSession (authenticated requests.Session)
+            # This properly binds credentials to the session
+            http_session = AuthorizedSession(credentials)
             adapter = TimeoutHTTPAdapter(timeout=Config.TRANSLATION_API_TIMEOUT)
             http_session.mount('https://', adapter)
             http_session.mount('http://', adapter)
             
-            # Initialize the Translation client with custom HTTP session
+            # Initialize the Translation client with authenticated HTTP session
             self.translator = translate.Client(_http=http_session)
             # Cantonese language code - supported as of November 2024
             self.target_language = 'yue'
