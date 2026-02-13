@@ -584,13 +584,20 @@ Integration tests verify component interactions:
 The implementation uses **Google Cloud Translation API** (google-cloud-translate library):
 
 1. **Credentials**: Requires `GOOGLE_APPLICATION_CREDENTIALS` environment variable pointing to service account key file
-2. **Target Language**: Uses 'yue' (Cantonese)
-   - As of November 2024, Google Cloud Translation API supports Cantonese ('yue') as part of its 189-language expansion
-   - Translates directly to Cantonese, not Mandarin
-3. **Client**: Uses `translate_v2.Client()` for simple translation operations
-4. **Fallback**: Falls back to mock translations if credentials not configured or library not installed
-5. **Error Handling**: Gracefully handles API failures with clear error messages
-6. **Review Interface**: Users can review and edit translations for accuracy via the interactive table
+2. **Target Language**: Configurable choice between Cantonese and Traditional Chinese
+   - **Current Implementation**: Uses `'yue'` (Cantonese) for direct Cantonese translation
+   - **Alternative Option**: Can use `'zh-TW'` (Traditional Chinese - Taiwan) for Mandarin in Traditional characters
+   - **API Support**: As of November 2024, Google Cloud Translation API supports both Cantonese ('yue') and Traditional Chinese ('zh-TW') as part of its 189-language expansion
+   - **Code Decision**: The choice between 'yue' and 'zh-TW' is a design decision, not an API limitation
+3. **Client**: Uses `translate_v2.Client()` for translation operations
+   - **For Cantonese Output**: Use language code `'yue'` when Cantonese is desired
+   - **Model Verification**: Verify NMT (Neural Machine Translation) model availability for 'yue' in your region
+   - **Fallback Strategy**: If 'yue' model is unavailable or produces unexpected results, consider:
+     - Using 'zh-TW' with manual review/editing for Cantonese-specific vocabulary
+     - Falling back to mock translations for development/testing
+     - Implementing manual translation workflow with review interface
+4. **Error Handling**: Gracefully handles API failures with clear error messages
+5. **Review Interface**: Users can review and edit translations for accuracy via the interactive table, regardless of which language code is used
 
 **Setup Instructions**:
 ```bash
@@ -601,11 +608,17 @@ pip install google-cloud-translate
 export GOOGLE_APPLICATION_CREDENTIALS="/path/to/service-account-key.json"
 ```
 
-**Translation Workflow**:
+**Translation Workflow (Current Implementation with 'yue')**:
 1. System translates English to Cantonese using 'yue' language code
 2. User reviews translations in interactive table
-3. User can manually edit translations if needed for accuracy
+3. User can manually edit translations if needed for accuracy or regional variations
 4. System generates Jyutping romanization from Cantonese text
+
+**Alternative Workflow (Using 'zh-TW')**:
+1. System translates English to Traditional Chinese (Mandarin) using 'zh-TW' language code
+2. User reviews and edits translations to convert Mandarin to Cantonese vocabulary
+3. User manually corrects for Cantonese-specific terms and expressions
+4. System generates Jyutping romanization from edited Cantonese text
 
 ### Romanization Implementation
 

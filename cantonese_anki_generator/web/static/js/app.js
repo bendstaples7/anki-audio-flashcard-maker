@@ -1518,8 +1518,23 @@ async function handleGenerateTranslations() {
         });
         
         if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(errorData.error || 'Translation failed');
+            // Try to parse JSON error response, fallback to text if not JSON
+            let errorMessage = 'Translation failed';
+            try {
+                const contentType = response.headers.get('content-type');
+                if (contentType && contentType.includes('application/json')) {
+                    const errorData = await response.json();
+                    errorMessage = errorData.error || errorMessage;
+                } else {
+                    const errorText = await response.text();
+                    errorMessage = errorText || `${response.status} ${response.statusText}`;
+                }
+            } catch (parseError) {
+                // If parsing fails, use status text
+                errorMessage = `${response.status} ${response.statusText}`;
+                console.error('Failed to parse error response:', parseError);
+            }
+            throw new Error(errorMessage);
         }
         
         const data = await response.json();
@@ -1853,11 +1868,10 @@ function handleCellBlur(event) {
             if (!isValid) {
                 row.classList.add('has-error');
             } else {
-                // Only remove error class if it was added by validation, not by translation failure
-                const originalEntry = AppState.spreadsheetPrep.vocabularyEntries[index];
-                if (originalEntry.success) {
-                    row.classList.remove('has-error');
-                }
+                // Remove error class when entry becomes valid
+                // Update success flag to reflect current validation state
+                entry.success = true;
+                row.classList.remove('has-error');
             }
         }
         
@@ -1974,15 +1988,34 @@ async function handleExportToSheet() {
         });
         
         if (!response.ok) {
-            const errorData = await response.json();
+            // Try to parse JSON error response, fallback to text if not JSON
+            let errorMessage = 'Export failed';
+            let errorData = null;
+            
+            try {
+                const contentType = response.headers.get('content-type');
+                if (contentType && contentType.includes('application/json')) {
+                    errorData = await response.json();
+                    errorMessage = errorData.error || errorMessage;
+                } else {
+                    const errorText = await response.text();
+                    errorMessage = errorText || `${response.status} ${response.statusText}`;
+                }
+            } catch (parseError) {
+                // If parsing fails, use status text
+                errorMessage = `${response.status} ${response.statusText}`;
+                console.error('Failed to parse error response:', parseError);
+            }
             
             // Check for authentication error (Task 14.2)
-            if (response.status === 401 || errorData.error_code === 'AUTHENTICATION_REQUIRED') {
-                handlePrepAuthenticationError(errorData);
+            if (response.status === 401 || (errorData && errorData.error_code === 'AUTHENTICATION_REQUIRED')) {
+                if (errorData) {
+                    handlePrepAuthenticationError(errorData);
+                }
                 throw new Error('Authentication required');
             }
             
-            throw new Error(errorData.error || 'Export failed');
+            throw new Error(errorMessage);
         }
         
         const data = await response.json();

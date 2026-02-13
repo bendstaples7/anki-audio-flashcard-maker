@@ -145,6 +145,35 @@ def test_export_endpoint_with_validation_errors(client):
         assert 'validation' in data['error'].lower()
 
 
+def test_export_endpoint_with_non_dict_entries(client):
+    """Test export endpoint with non-dict entries (should return 400, not 500)."""
+    with patch('cantonese_anki_generator.web.api.GoogleDocsAuthenticator') as mock_auth:
+        
+        # Setup mock authenticator
+        mock_auth_instance = Mock()
+        mock_auth.return_value = mock_auth_instance
+        mock_auth_instance.get_token_status.return_value = {
+            'valid': True,
+            'expired': False
+        }
+        
+        # Make request with invalid entry types (strings instead of dicts)
+        response = client.post('/api/spreadsheet-prep/export', json={
+            'entries': [
+                {'english': 'hello', 'cantonese': '你好', 'jyutping': 'nei5 hou2'},  # Valid
+                'invalid_string_entry',  # Invalid - string instead of dict
+                {'english': 'goodbye', 'cantonese': '再見', 'jyutping': 'zoi3 gin3'}  # Valid
+            ]
+        })
+        
+        assert response.status_code == 400  # Should be 400, not 500
+        data = response.get_json()
+        assert data['success'] is False
+        assert 'invalid entry' in data['error'].lower()
+        assert 'index 1' in data['error'].lower()  # Should mention the offending index
+        assert 'invalid_index' in data  # Should include the invalid index in response
+
+
 def test_export_endpoint_requires_authentication(client):
     """Test export endpoint requires valid authentication."""
     with patch('cantonese_anki_generator.web.api.GoogleDocsAuthenticator') as mock_auth:

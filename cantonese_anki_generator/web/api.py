@@ -2338,6 +2338,21 @@ def export_to_sheets():
         
         entries = []
         for i, entry_data in enumerate(entries_data):
+            # Validate that each entry is a dictionary
+            if not isinstance(entry_data, dict):
+                logger.warning(f"Invalid entry at index {i}: expected dict, got {type(entry_data).__name__}")
+                response = format_error_response(
+                    error_message=f'Invalid entry at index {i}: expected object/dict, got {type(entry_data).__name__}. Each entry must be an object with "english", "cantonese", and "jyutping" fields.',
+                    error_code=ErrorCode.INVALID_INPUT,
+                    action_required=ActionRequired.RETRY,
+                    additional_data={
+                        'invalid_index': i,
+                        'invalid_value': str(entry_data),
+                        'expected_format': {'english': 'string', 'cantonese': 'string', 'jyutping': 'string'}
+                    }
+                )
+                return jsonify(response), 400
+            
             entry = VocabularyEntry(
                 english=entry_data.get('english', ''),
                 cantonese=entry_data.get('cantonese', ''),
