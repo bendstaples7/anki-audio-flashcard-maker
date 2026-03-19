@@ -44,7 +44,7 @@ class AlignmentValidator(BaseAlignmentValidator):
     reporting for alignment issues.
     """
 
-    def __init__(self, config: ValidationConfig):
+    def __init__(self, config: ValidationConfig, whisper_model: str = "turbo"):
         """Initialize the alignment validator with configuration."""
         super().__init__(config)
         self._validation_methods = [
@@ -57,15 +57,11 @@ class AlignmentValidator(BaseAlignmentValidator):
             "semantic_verification",  # NEW: Semantic validation using Whisper
         ]
 
-        # Initialize speech verifier if available
+        # Defer speech verifier creation until first use to avoid heavy
+        # model loading during startup.
         self._speech_verifier = None
-        if SPEECH_VERIFICATION_AVAILABLE and WHISPER_AVAILABLE:
-            try:
-                self._speech_verifier = WhisperVerifier(model_size="turbo")
-                logger.info("Speech verifier initialized for semantic validation")
-            except Exception as e:
-                logger.warning(f"Failed to initialize speech verifier: {e}")
-                self._speech_verifier = None
+        self._speech_verifier_initialized = False
+        self._whisper_model = whisper_model
 
         # Confidence calculation weights for different metrics
         self._confidence_weights = {
@@ -84,6 +80,19 @@ class AlignmentValidator(BaseAlignmentValidator):
             "max_duration_ratio": 3.0,  # Max 3:1 duration ratio
             "min_audio_quality": 0.3,  # Minimum audio quality score
         }
+
+    def _get_speech_verifier(self):
+        """Lazily initialize and return the speech verifier on first use."""
+        if not self._speech_verifier_initialized:
+            self._speech_verifier_initialized = True
+            if SPEECH_VERIFICATION_AVAILABLE and WHISPER_AVAILABLE:
+                try:
+                    self._speech_verifier = WhisperVerifier(model_size=self._whisper_model)
+                    logger.info("Speech verifier initialized for semantic validation")
+                except Exception as e:
+                    logger.warning(f"Failed to initialize speech verifier: {e}")
+                    self._speech_verifier = None
+        return self._speech_verifier
 
     def validate(self, data: Dict[str, Any]) -> ValidationResult:
         """
@@ -575,7 +584,8 @@ class AlignmentValidator(BaseAlignmentValidator):
         """
         issues = []
         
-        if not self._speech_verifier:
+        verifier = self._get_speech_verifier()
+        if not verifier:
             return issues  # Skip if speech verification not available
         
         try:
@@ -587,12 +597,12 @@ class AlignmentValidator(BaseAlignmentValidator):
                 return issues
             
             # Transcribe the audio segment
-            transcription_result = self._speech_verifier.transcribe_audio_segment(
+            transcription_result = verifier.transcribe_audio_segment(
                 audio_segment.audio_data, 22050  # Assume standard sample rate
             )
             
             # Compare transcription with expected Cantonese text
-            comparison_result = self._speech_verifier.compare_transcription_with_expected(
+            comparison_result = verifier.compare_transcription_with_expected(
                 transcription_result['text'], vocab_entry.cantonese
             )
             
@@ -665,7 +675,7 @@ class AlignmentValidator(BaseAlignmentValidator):
         
         This is the core semantic validation that detects content mismatches.
         """
-        if not self._speech_verifier:
+        if not self._get_speech_verifier():
             return 0.7  # Neutral score if speech verification not available
         
         try:
@@ -673,13 +683,15 @@ class AlignmentValidator(BaseAlignmentValidator):
             if not hasattr(audio_segment, "audio_data") or audio_segment.audio_data is None:
                 return 0.5
             
+            verifier = self._get_speech_verifier()
+            
             # Transcribe the audio segment
-            transcription_result = self._speech_verifier.transcribe_audio_segment(
+            transcription_result = verifier.transcribe_audio_segment(
                 audio_segment.audio_data, 22050  # Assume standard sample rate
             )
             
             # Compare transcription with expected Cantonese text
-            comparison_result = self._speech_verifier.compare_transcription_with_expected(
+            comparison_result = verifier.compare_transcription_with_expected(
                 transcription_result['text'], vocab_entry.cantonese
             )
             

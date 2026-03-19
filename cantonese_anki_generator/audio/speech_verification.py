@@ -49,9 +49,9 @@ class WhisperVerifier:
         Initialize Whisper verifier.
         
         Args:
-            model_size: Whisper model size ("tiny", "base", "small", "medium",
-                        "large-v3", "turbo"). Defaults to "turbo" which supports
-                        Cantonese (yue) with good speed/accuracy tradeoff.
+            model_size: Whisper model size. Only "turbo" and "large-v3" are
+                supported (these have native Cantonese/yue support). Defaults
+                to "turbo". Unsupported values will raise SpeechVerificationError.
         """
         if not WHISPER_AVAILABLE:
             raise SpeechVerificationError(
@@ -60,11 +60,8 @@ class WhisperVerifier:
         
         self.model_size = model_size
         self.model = None
-        self._load_model()
         
-        # Determine if this model supports Cantonese (yue) natively by
-        # probing the tokenizer. Only models with num_languages=100 (large-v3,
-        # turbo) include the yue token.
+        # Validate Cantonese support BEFORE downloading/loading the model.
         self._supports_cantonese = False
         try:
             from whisper.tokenizer import get_tokenizer
@@ -73,14 +70,18 @@ class WhisperVerifier:
                 self._supports_cantonese = self.model_size in (
                     "large-v3", "large-v3-turbo", "turbo"
                 )
-        except Exception:
-            pass
+        except Exception as e:
+            raise SpeechVerificationError(
+                f"Failed to probe Whisper tokenizer for Cantonese support: {e}"
+            )
 
         if not self._supports_cantonese:
             raise SpeechVerificationError(
                 f"Whisper model '{self.model_size}' does not support Cantonese (yue). "
                 f"Use 'turbo' or 'large-v3' instead: WhisperVerifier(model_size='turbo')"
             )
+        
+        self._load_model()
     
     def _load_model(self):
         """Load the Whisper model."""

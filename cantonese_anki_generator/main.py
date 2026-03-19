@@ -1383,10 +1383,10 @@ Web Interface:
     
     parser.add_argument(
         "--whisper-model",
-        choices=["tiny", "base", "small", "medium", "large", "large-v3", "turbo"],
+        choices=["large-v3", "large-v3-turbo", "turbo"],
         default="turbo",
         help="Whisper model size for speech verification (default: turbo). "
-             "Use 'turbo' or 'large-v3' for native Cantonese (yue) support."
+             "Only models with native Cantonese (yue) support are accepted."
     )
     
     parser.add_argument(

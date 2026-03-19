@@ -346,8 +346,8 @@ class SmartBoundaryDetector:
         try:
             from .speech_verification import WhisperVerifier
             verifier = WhisperVerifier(model_size="turbo")
-        except ImportError:
-            logger.warning("Whisper not available for boundary refinement")
+        except Exception as e:
+            logger.warning(f"Whisper not available for boundary refinement: {e}")
             return segments
         
         refined_segments = []
