@@ -71,7 +71,7 @@ class WhisperVerifier:
             tok = get_tokenizer(multilingual=True, num_languages=100)
             if 'yue' in tok.all_language_codes:
                 self._supports_cantonese = self.model_size in (
-                    "large-v3", "large-v3-turbo", "turbo", "large"
+                    "large-v3", "large-v3-turbo", "turbo"
                 )
         except Exception:
             pass
