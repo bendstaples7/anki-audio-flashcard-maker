@@ -47,7 +47,7 @@ def setup_logging(verbose: bool = False):
 
 def process_pipeline(google_doc_url: str, audio_file: Path, output_path: Path, 
                     verbose: bool = False, enable_speech_verification: bool = False,
-                    whisper_model: str = "base", manual_start_offset: float = None,
+                    whisper_model: str = "turbo", manual_start_offset: float = None,
                     debug_alignment: bool = False, validation_level: str = "normal",
                     disable_validation: bool = False, validation_report: bool = False) -> bool:
     """
@@ -1383,9 +1383,10 @@ Web Interface:
     
     parser.add_argument(
         "--whisper-model",
-        choices=["tiny", "base", "small", "medium", "large"],
-        default="base",
-        help="Whisper model size for speech verification (default: base)"
+        choices=["tiny", "base", "small", "medium", "large", "large-v3", "turbo"],
+        default="turbo",
+        help="Whisper model size for speech verification (default: turbo). "
+             "Use 'turbo' or 'large-v3' for native Cantonese (yue) support."
     )
     
     parser.add_argument(

@@ -61,7 +61,7 @@ class AlignmentValidator(BaseAlignmentValidator):
         self._speech_verifier = None
         if SPEECH_VERIFICATION_AVAILABLE and WHISPER_AVAILABLE:
             try:
-                self._speech_verifier = WhisperVerifier(model_size="base")
+                self._speech_verifier = WhisperVerifier(model_size="turbo")
                 logger.info("Speech verifier initialized for semantic validation")
             except Exception as e:
                 logger.warning(f"Failed to initialize speech verifier: {e}")
