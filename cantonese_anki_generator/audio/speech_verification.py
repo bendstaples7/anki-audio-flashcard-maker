@@ -44,12 +44,14 @@ class WhisperVerifier:
     with expected Cantonese text to verify and correct alignment.
     """
     
-    def __init__(self, model_size: str = "base"):
+    def __init__(self, model_size: str = "turbo"):
         """
         Initialize Whisper verifier.
         
         Args:
-            model_size: Whisper model size ("tiny", "base", "small", "medium", "large")
+            model_size: Whisper model size. Only "turbo" and "large-v3" are
+                supported (these have native Cantonese/yue support). Defaults
+                to "turbo". Unsupported values will raise SpeechVerificationError.
         """
         if not WHISPER_AVAILABLE:
             raise SpeechVerificationError(
@@ -58,6 +60,27 @@ class WhisperVerifier:
         
         self.model_size = model_size
         self.model = None
+        
+        # Validate Cantonese support BEFORE downloading/loading the model.
+        self._supports_cantonese = False
+        try:
+            from whisper.tokenizer import get_tokenizer
+            tok = get_tokenizer(multilingual=True, num_languages=100)
+            if 'yue' in tok.all_language_codes:
+                self._supports_cantonese = self.model_size in (
+                    "large-v3", "large-v3-turbo", "turbo"
+                )
+        except Exception as e:
+            raise SpeechVerificationError(
+                f"Failed to probe Whisper tokenizer for Cantonese support: {e}"
+            )
+
+        if not self._supports_cantonese:
+            raise SpeechVerificationError(
+                f"Whisper model '{self.model_size}' does not support Cantonese (yue). "
+                f"Use 'turbo' or 'large-v3' instead: WhisperVerifier(model_size='turbo')"
+            )
+        
         self._load_model()
     
     def _load_model(self):
@@ -90,10 +113,13 @@ class WhisperVerifier:
                 audio_normalized = (audio_data * 32767).astype(np.int16)
                 wavfile.write(temp_file.name, sample_rate, audio_normalized)
                 
-                # Transcribe with Whisper
+                # Transcribe with Whisper using Cantonese (yue)
+                if not hasattr(self, '_logged_language'):
+                    logger.info("Whisper transcription language: 'yue' (Cantonese)")
+                    self._logged_language = True
                 result = self.model.transcribe(
                     temp_file.name,
-                    language='zh',  # Chinese (includes Cantonese)
+                    language='yue',
                     task='transcribe',
                     verbose=False
                 )
@@ -455,12 +481,13 @@ class AlignmentVerifier:
     Cantonese text to identify and correct alignment issues.
     """
     
-    def __init__(self, whisper_model_size: str = "base"):
+    def __init__(self, whisper_model_size: str = "turbo"):
         """
         Initialize alignment verifier.
         
         Args:
-            whisper_model_size: Whisper model size to use
+            whisper_model_size: Whisper model size to use. Defaults to "turbo"
+                which supports Cantonese (yue) natively.
         """
         self.whisper = WhisperVerifier(whisper_model_size)
         

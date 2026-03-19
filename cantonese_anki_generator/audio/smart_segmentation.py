@@ -345,9 +345,9 @@ class SmartBoundaryDetector:
         # Import here to avoid circular imports
         try:
             from .speech_verification import WhisperVerifier
-            verifier = WhisperVerifier(model_size="base")
-        except ImportError:
-            logger.warning("Whisper not available for boundary refinement")
+            verifier = WhisperVerifier(model_size="turbo")
+        except Exception as e:
+            logger.warning(f"Whisper not available for boundary refinement: {e}")
             return segments
         
         refined_segments = []

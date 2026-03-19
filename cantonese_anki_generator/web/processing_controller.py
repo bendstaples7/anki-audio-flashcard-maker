@@ -54,7 +54,7 @@ class ProcessingController:
             from cantonese_anki_generator.audio.speech_verification import WhisperVerifier
             from cantonese_anki_generator.audio.dynamic_alignment import DynamicAligner
             
-            self.speech_verifier = WhisperVerifier(model_size="base")
+            self.speech_verifier = WhisperVerifier(model_size="turbo")
             self.dynamic_aligner = DynamicAligner(speech_verifier=self.speech_verifier)
             logger.info("Dynamic aligner initialized with Whisper verification")
         except Exception as e:
