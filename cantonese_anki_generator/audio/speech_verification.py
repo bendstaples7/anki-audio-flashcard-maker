@@ -115,7 +115,7 @@ class WhisperVerifier:
                 
                 # Transcribe with Whisper using Cantonese (yue)
                 if not hasattr(self, '_logged_language'):
-                    logger.info(f"Whisper transcription language: 'yue' (Cantonese)")
+                    logger.info("Whisper transcription language: 'yue' (Cantonese)")
                     self._logged_language = True
                 result = self.model.transcribe(
                     temp_file.name,
