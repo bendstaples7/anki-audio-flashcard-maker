@@ -153,6 +153,8 @@ class EnvelopeSegmenter:
         - Valleys that touch frame 0 or the last frame are discarded
           (leading / trailing silence — not between-term gaps).
         """
+        if len(rms) == 0:
+            return []
         peak_rms = float(np.max(rms))
         if peak_rms == 0:
             return []

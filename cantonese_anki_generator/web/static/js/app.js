@@ -603,11 +603,26 @@ async function handleFormSubmit(event) {
         // Poll for completion — no timeout risk since each poll is a tiny GET
         let jobDone = false;
         let jobResult = null;
+        let pollFailures = 0;
+        const maxPollFailures = 5;
         while (!jobDone) {
             await new Promise(r => setTimeout(r, 2000)); // poll every 2s
             
-            const statusResp = await fetch(`${API_BASE}/process/status/${jobId}`);
-            const statusData = await statusResp.json();
+            let statusResp;
+            let statusData;
+            try {
+                statusResp = await fetchWithRetry(`${API_BASE}/process/status/${jobId}`, {}, 1);
+                statusData = await statusResp.json();
+            } catch (pollError) {
+                pollFailures++;
+                console.warn(`Poll attempt failed (${pollFailures}/${maxPollFailures}):`, pollError);
+                if (pollFailures >= maxPollFailures) {
+                    throw new Error('Lost connection to server during processing. Please try again.');
+                }
+                updateProgress(60, `Connection issue, retrying... (${pollFailures}/${maxPollFailures})`);
+                continue;
+            }
+            pollFailures = 0; // reset on success
             
             if (!statusResp.ok) {
                 throw new Error(statusData.error || 'Failed to check processing status');

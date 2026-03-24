@@ -6,6 +6,7 @@ a job_id immediately.  The frontend polls /process/status/<job_id>
 until the job completes (or fails).
 """
 
+import copy
 import threading
 import uuid
 import logging
@@ -44,7 +45,8 @@ class JobTracker:
 
     def get(self, job_id: str) -> Optional[Job]:
         with self._lock:
-            return self._jobs.get(job_id)
+            job = self._jobs.get(job_id)
+            return copy.copy(job) if job else None
 
     def update_stage(self, job_id: str, stage: str):
         with self._lock:
