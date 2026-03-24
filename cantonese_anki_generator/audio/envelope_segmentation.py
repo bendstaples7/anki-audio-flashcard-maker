@@ -3,7 +3,11 @@ Envelope-based audio segmentation.
 
 Segments audio by computing an RMS energy envelope, identifying
 contiguous low-energy regions (valleys), and selecting the N-1 deepest
-valleys as split points to produce exactly N segments.
+interior valleys as split points to produce exactly N segments.
+
+The threshold is derived from the peak RMS (1 % of max), so it adapts
+to overall recording volume without being fooled by mostly-silent
+recordings where the median RMS is near zero.
 """
 
 import logging
@@ -18,13 +22,13 @@ logger = logging.getLogger(__name__)
 
 class EnvelopeSegmenter:
     """
-    Segments audio into N parts by finding the deepest valleys in the
-    RMS energy envelope.
+    Segments audio into N parts by finding the deepest interior valleys
+    in the RMS energy envelope.
 
     A "valley" is a contiguous run of frames whose energy is below a
-    threshold derived from the audio itself.  Each valley yields one
-    candidate split point (its centre).  We rank valleys by their
-    minimum energy and pick the N-1 deepest ones.
+    threshold derived from the peak RMS.  Valleys that touch the very
+    start or end of the audio (leading/trailing silence) are excluded
+    so they cannot steal split-point slots from real between-term gaps.
     """
 
     def __init__(
@@ -32,10 +36,14 @@ class EnvelopeSegmenter:
         sample_rate: int = 22050,
         rms_window_ms: float = 20.0,
         rms_hop_ms: float = 10.0,
+        threshold_ratio: float = 0.01,
+        min_valley_ms: float = 50.0,
     ):
         self.sample_rate = sample_rate
         self.rms_window_ms = rms_window_ms
         self.rms_hop_ms = rms_hop_ms
+        self.threshold_ratio = threshold_ratio
+        self.min_valley_ms = min_valley_ms
 
     # ------------------------------------------------------------------
     # Public API
@@ -68,21 +76,21 @@ class EnvelopeSegmenter:
         # 1. RMS energy envelope
         rms_env, hop_samples = self._rms_envelope(audio_data)
 
-        # 2. Find valleys (contiguous low-energy regions)
+        # 2. Find interior valleys (contiguous low-energy regions,
+        #    excluding leading/trailing silence)
         valleys = self._find_valleys(rms_env)
 
         logger.info(
-            "Envelope segmentation: %d valleys found, need %d split points "
-            "for %d segments",
+            "Envelope segmentation: %d interior valleys found, need %d "
+            "split points for %d segments",
             len(valleys), expected_count - 1, expected_count,
         )
 
         # 3. Pick the N-1 deepest valleys
         needed = expected_count - 1
         if len(valleys) >= needed:
-            # Sort by minimum energy in the valley (ascending = deepest first)
             ranked = sorted(valleys, key=lambda v: v[2])
-            chosen = sorted(ranked[:needed], key=lambda v: v[0])  # re-sort by time
+            chosen = sorted(ranked[:needed], key=lambda v: v[0])
         else:
             chosen = sorted(valleys, key=lambda v: v[0])
 
@@ -130,21 +138,30 @@ class EnvelopeSegmenter:
             frames.append(float(np.sqrt(np.mean(w ** 2))))
         return np.array(frames, dtype=np.float64), hop
 
-    @staticmethod
     def _find_valleys(
+        self,
         rms: np.ndarray,
     ) -> List[Tuple[int, int, float]]:
         """
         Identify contiguous low-energy regions in the RMS envelope.
 
         Returns a list of (start_frame, end_frame, min_energy) tuples.
-        The threshold is set at 15 % of the median RMS so that it adapts
-        to the overall loudness of the recording.
-        """
-        median_rms = float(np.median(rms))
-        threshold = median_rms * 0.15
 
-        valleys: List[Tuple[int, int, float]] = []
+        - Threshold is 1 % of the peak RMS, so it adapts to overall
+          loudness without being fooled by mostly-silent recordings.
+        - Valleys narrower than *min_valley_ms* are discarded (noise).
+        - Valleys that touch frame 0 or the last frame are discarded
+          (leading / trailing silence — not between-term gaps).
+        """
+        peak_rms = float(np.max(rms))
+        if peak_rms == 0:
+            return []
+        threshold = peak_rms * self.threshold_ratio
+
+        min_width = max(1, int(self.min_valley_ms / self.rms_hop_ms))
+        total_frames = len(rms)
+
+        raw_valleys: List[Tuple[int, int, float]] = []
         in_valley = False
         start = 0
         min_val = float("inf")
@@ -159,11 +176,17 @@ class EnvelopeSegmenter:
                     min_val = min(min_val, val)
             else:
                 if in_valley:
-                    valleys.append((start, i, min_val))
+                    raw_valleys.append((start, i, min_val))
                     in_valley = False
-        # Close a trailing valley
         if in_valley:
-            valleys.append((start, len(rms), min_val))
+            raw_valleys.append((start, total_frames, min_val))
+
+        # Keep only interior valleys with sufficient width
+        valleys = [
+            (s, e, m)
+            for s, e, m in raw_valleys
+            if (e - s) >= min_width and s > 0 and e < total_frames
+        ]
 
         return valleys
 
