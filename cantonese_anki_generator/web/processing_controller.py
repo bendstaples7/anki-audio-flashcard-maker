@@ -14,6 +14,7 @@ import numpy as np
 from cantonese_anki_generator.processors.google_sheets_parser import GoogleSheetsParser
 from cantonese_anki_generator.audio.loader import AudioLoader
 from cantonese_anki_generator.audio.smart_segmentation import SmartBoundaryDetector
+from cantonese_anki_generator.audio.envelope_segmentation import EnvelopeSegmenter
 from cantonese_anki_generator.models import VocabularyEntry, AudioSegment, AlignedPair
 from cantonese_anki_generator.alignment.global_reassignment import GlobalReassignmentCoordinator
 from .session_models import AlignmentSession, TermAlignment, generate_session_id, generate_term_id
@@ -46,6 +47,7 @@ class ProcessingController:
         self.parser = GoogleSheetsParser()
         self.audio_loader = AudioLoader(target_sample_rate=sample_rate)
         self.boundary_detector = SmartBoundaryDetector(sample_rate=sample_rate)
+        self.envelope_segmenter = EnvelopeSegmenter(sample_rate=sample_rate)
         self.audio_extractor = AudioExtractor(temp_dir=temp_dir, sample_rate=sample_rate)
         self.regeneration_progress_callback = None  # Progress callback for regeneration
         
@@ -243,8 +245,8 @@ class ProcessingController:
             Exception: If segmentation fails
         """
         try:
-            segments = self.boundary_detector.segment_audio(
-                audio_data, expected_count, start_offset=0.0
+            segments = self.envelope_segmenter.segment_audio(
+                audio_data, expected_count
             )
             
             if not segments:

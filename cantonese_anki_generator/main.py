@@ -16,6 +16,7 @@ from .processors.google_sheets_parser import GoogleSheetsParser, GoogleSheetsPar
 from .processors.google_docs_auth import GoogleDocsAuthError
 from .audio.loader import AudioLoader, AudioValidationError
 from .audio.smart_segmentation import SmartBoundaryDetector
+from .audio.envelope_segmentation import EnvelopeSegmenter
 from .audio.speech_verification import AlignmentVerifier, SpeechVerificationError, WHISPER_AVAILABLE, WhisperVerifier
 from .audio.dynamic_alignment import DynamicAligner
 from .alignment.global_reassignment import GlobalReassignmentCoordinator
@@ -415,158 +416,26 @@ def process_pipeline(google_doc_url: str, audio_file: Path, output_path: Path,
         filtered_vocab = vocab_entries
         
         try:
-            detector = SmartBoundaryDetector(sample_rate=sample_rate)
-            # Use optimized parameters for precise, non-overlapping segmentation
-            # Start from the beginning of audio to avoid skipping vocabulary words
-            logger.info(f"Using improved smart segmentation with non-overlapping boundaries")
-            logger.info(f"Starting segmentation from beginning of audio (auto-detect silence)")
-            
-            # Add debug info about audio data
+            # Envelope-based segmentation: find the N-1 deepest amplitude
+            # valleys to split the audio into exactly N segments.
+            segmenter = EnvelopeSegmenter(sample_rate=sample_rate)
+
+            logger.info(f"Using envelope-based segmentation")
             logger.info(f"Audio data shape: {audio_data.shape}, sample_rate: {sample_rate}")
             logger.info(f"Audio duration: {len(audio_data) / sample_rate:.2f}s")
             logger.info(f"Expected segments: {len(vocab_entries)}")
-            
-            # For alignment debugging, try multiple start offsets if this is a problematic case
-            if manual_start_offset is not None:
-                logger.info(f"🎯 Using manual start offset: {manual_start_offset:.1f}s")
-                segments = detector.segment_audio(audio_data, len(vocab_entries), 
-                                                start_offset=manual_start_offset, force_start_offset=True)
-            elif len(vocab_entries) == 24:  # Your specific case
-                logger.info("🎯 Detected 24-term vocabulary - testing multiple alignment strategies")
-                
-                # Test different start offsets to find the best alignment
-                # Based on user feedback, try negative offsets first since terms are getting audio from later positions
-                test_offsets = [-2.0, -1.0, 0.0, 1.0, 2.0, 3.0, 3.2, 4.0, 5.0]
-                best_offset = 0.0
-                best_score = float('inf')
-                
-                for test_offset in test_offsets:
-                    try:
-                        test_segments = detector.segment_audio(audio_data, len(vocab_entries), 
-                                                             start_offset=test_offset, force_start_offset=True)
-                        
-                        # Score based on segment duration consistency and expected timing
-                        durations = [s.end_time - s.start_time for s in test_segments]
-                        avg_duration = sum(durations) / len(durations)
-                        
-                        # Calculate expected duration based on available audio time
-                        if test_offset >= 0:
-                            available_time = (len(audio_data) / sample_rate) - test_offset
-                        else:
-                            available_time = len(audio_data) / sample_rate
-                        expected_duration = available_time / len(vocab_entries)
-                        
-                        # Score: lower is better
-                        duration_variance = sum((d - avg_duration) ** 2 for d in durations) / len(durations)
-                        duration_diff = abs(avg_duration - expected_duration)
-                        
-                        # Penalize negative offsets less since they might fix the systematic shift issue
-                        offset_penalty = 0.1 if test_offset < 0 else 0.0
-                        score = duration_variance + duration_diff * 2 - offset_penalty
-                        
-                        logger.info(f"   Offset {test_offset:+4.1f}s: avg_duration={avg_duration:.2f}s, "
-                                  f"expected={expected_duration:.2f}s, score={score:.3f}")
-                        
-                        if score < best_score:
-                            best_score = score
-                            best_offset = test_offset
-                            
-                    except Exception as e:
-                        logger.debug(f"   Offset {test_offset:+4.1f}s failed: {e}")
-                
-                logger.info(f"🎯 Selected best offset: {best_offset:+4.1f}s (score: {best_score:.3f})")
-                
-                # Use the best offset found
-                segments = detector.segment_audio(audio_data, len(vocab_entries), 
-                                                start_offset=best_offset, force_start_offset=True)
-            else:
-                # Normal processing for other cases - try a small negative offset by default
-                # to account for common systematic alignment issues
-                default_offset = -0.5  # Small negative offset to account for systematic shifts
-                segments = detector.segment_audio(audio_data, len(vocab_entries), start_offset=default_offset)
-            
-            # Debug: Log first few segments for alignment verification
-            logger.info(f"🔍 First few audio segments for manual verification:")
-            for i in range(min(3, len(segments))):
-                segment = segments[i]
-                logger.info(f"   Segment {i+1}: {segment.start_time:.3f}s - {segment.end_time:.3f}s "
-                          f"(duration: {segment.end_time - segment.start_time:.3f}s)")
-            
-            if len(segments) > 3:
-                logger.info(f"   ... and {len(segments) - 3} more segments")
-            
-            # Debug: Log vocabulary order for comparison
-            logger.info(f"🔍 First few vocabulary entries for comparison:")
-            for i in range(min(3, len(filtered_vocab))):
-                vocab = filtered_vocab[i]
-                logger.info(f"   Vocab {i+1}: '{vocab.english}' -> '{vocab.cantonese}'")
-            
-            if len(filtered_vocab) > 3:
-                logger.info(f"   ... and {len(filtered_vocab) - 3} more entries")
-            
-            # ALIGNMENT DEBUGGING: Show detailed alignment analysis
-            logger.info(f"🔍 Checking if debug alignment should run: debug_alignment={debug_alignment}")
-            if debug_alignment:
-                logger.info(f"\n" + "=" * 80)
-                logger.info(f"🔍 DETAILED ALIGNMENT DEBUGGING")
-                logger.info(f"=" * 80)
-                
-                # Find specific terms that might have alignment issues
-                problem_terms = ['di fa', 'the flowers', '地方', '花', 'pants', 'mai di la', '褲子']
-                found_terms = []
-                
-                for i, vocab in enumerate(filtered_vocab):
-                    for term in problem_terms:
-                        if term.lower() in vocab.english.lower() or term in vocab.cantonese:
-                            found_terms.append((i, vocab, term))
-                
-                if found_terms:
-                    logger.info(f"🎯 Found potentially problematic terms:")
-                    for idx, vocab, term in found_terms:
-                        logger.info(f"   Index {idx}: '{vocab.english}' -> '{vocab.cantonese}' (matched: {term})")
-                
-                # Test multiple offsets and show detailed results
-                logger.info(f"\n🔍 Testing multiple alignment offsets:")
-                logger.info(f"   Current segments: {len(segments)}")
-                logger.info(f"   Vocabulary entries: {len(filtered_vocab)}")
-                
-                # Include negative offsets to test for systematic shifts
-                test_offsets = [-2.0, -1.0, 0.0, 1.0, 2.0, 3.0, 3.2, 4.0, 5.0]
-                
-                for test_offset in test_offsets:
-                    try:
-                        test_segments = detector.segment_audio(audio_data, len(filtered_vocab), 
-                                                             start_offset=test_offset, force_start_offset=True)
-                        
-                        logger.info(f"\n   Offset {test_offset:4.1f}s: Created {len(test_segments)} segments")
-                        
-                        # Show alignment for found problematic terms
-                        for idx, vocab, term in found_terms:
-                            if idx < len(test_segments):
-                                seg = test_segments[idx]
-                                logger.info(f"      '{vocab.english}' -> {seg.start_time:.1f}-{seg.end_time:.1f}s "
-                                          f"(duration: {seg.end_time - seg.start_time:.1f}s)")
-                            else:
-                                logger.info(f"      '{vocab.english}' -> ❌ No segment available")
-                        
-                        # Show first few alignments for this offset
-                        logger.info(f"      First few alignments:")
-                        for i in range(min(5, len(test_segments), len(filtered_vocab))):
-                            seg = test_segments[i]
-                            vocab = filtered_vocab[i]
-                            logger.info(f"        {i:2d}. '{vocab.english}' -> {seg.start_time:.1f}-{seg.end_time:.1f}s")
-                            
-                    except Exception as e:
-                        logger.info(f"   Offset {test_offset:4.1f}s: ❌ Error: {e}")
-                
-                logger.info(f"\n🎯 ALIGNMENT DEBUGGING RECOMMENDATIONS:")
-                logger.info(f"   1. Look at the timing ranges above for your problematic terms")
-                logger.info(f"   2. Listen to your audio at those time ranges")
-                logger.info(f"   3. Find the offset where the term gets the correct audio")
-                logger.info(f"   4. Use that offset with: --start-offset X.X")
-                logger.info(f"   5. Or install Whisper for automatic alignment: pip install openai-whisper")
-                logger.info(f"=" * 80)
-            
+
+            segments = segmenter.segment_audio(audio_data, len(vocab_entries))
+
+            # Log segment summary
+            logger.info(f"🔍 Audio segments:")
+            for i in range(min(5, len(segments))):
+                seg = segments[i]
+                logger.info(f"   Segment {i+1}: {seg.start_time:.3f}s - {seg.end_time:.3f}s "
+                          f"(duration: {seg.end_time - seg.start_time:.3f}s)")
+            if len(segments) > 5:
+                logger.info(f"   ... and {len(segments) - 5} more segments")
+
             progress_tracker.update_summary_data(audio_segments=len(segments))
             progress_tracker.complete_stage(ProcessingStage.AUDIO_SEGMENTATION, success=True,
                                           details={'segment_count': len(segments)})
@@ -795,78 +664,21 @@ def process_pipeline(google_doc_url: str, audio_file: Path, output_path: Path,
         
         # Fallback to static alignment if dynamic alignment wasn't used or failed
         if not aligned_pairs:
-            logger.info("🔧 Using fallback static alignment")
-            
-            # Find optimal offset to preserve all vocabulary
-            logger.info("🎯 Finding optimal offset to preserve all vocabulary entries...")
-            best_offset = 0
-            best_coverage = 0.0
-            
-            # TARGETED FIX: Test negative offsets first to counteract systematic positive shifts
-            # Based on user feedback that "pants" gets "mai di la" audio (2 positions later)
-            test_offsets = [-2, -1, 0, 1, 2]  # Prioritize negative offsets
-            logger.info("🔧 Testing negative offsets first to counteract systematic alignment shifts")
-            
-            for test_offset in test_offsets:
-                if test_offset >= 0:
-                    max_possible_cards = min(len(segments) - test_offset, len(filtered_vocab))
-                else:
-                    max_possible_cards = min(len(segments), len(filtered_vocab) + test_offset)
-                
-                vocab_coverage = max_possible_cards / len(filtered_vocab) if len(filtered_vocab) > 0 else 0
-                
-                logger.info(f"Offset {test_offset:+d}: can create {max_possible_cards}/{len(filtered_vocab)} cards ({vocab_coverage*100:.1f}% coverage)")
-                
-                # Prioritize negative offsets when coverage is equal
-                if vocab_coverage > best_coverage or (vocab_coverage == best_coverage and test_offset < best_offset):
-                    best_coverage = vocab_coverage
-                    best_offset = test_offset
-                    logger.info(f"🎯 New best offset: {test_offset:+d} with {vocab_coverage*100:.1f}% coverage")
-            
-            alignment_offset = best_offset
-            logger.info(f"🎯 Selected alignment offset: {alignment_offset:+d} (coverage: {best_coverage*100:.1f}%)")
-            
-            # Create aligned pairs using static offset
+            logger.info("🔧 Using positional alignment (segment i → vocab i)")
+
             aligned_pairs = []
-            
-            # Calculate how many pairs we can create with the optimized offset
-            logger.info(f"🔢 Final pair calculation:")
-            logger.info(f"   Segments available: {len(segments)}")
-            logger.info(f"   Filtered vocab: {len(filtered_vocab)}")
-            logger.info(f"   Alignment offset: {alignment_offset:+d}")
-            
-            if alignment_offset >= 0:
-                max_pairs = min(len(segments) - alignment_offset, len(filtered_vocab))
-                logger.info(f"   Positive offset calculation: min({len(segments)} - {alignment_offset}, {len(filtered_vocab)}) = {max_pairs}")
-            else:
-                max_pairs = min(len(segments), len(filtered_vocab) + alignment_offset)
-                logger.info(f"   Negative offset calculation: min({len(segments)}, {len(filtered_vocab)} + {alignment_offset}) = {max_pairs}")
-            
-            logger.info(f"   ✅ Will create {max_pairs} aligned pairs")
-            
+            max_pairs = min(len(segments), len(filtered_vocab))
+
             for i in range(max_pairs):
-                # Apply offset to segment selection based on offset direction
-                if alignment_offset >= 0:
-                    segment_idx = i + alignment_offset
-                    vocab_idx = i
-                else:
-                    segment_idx = i
-                    vocab_idx = i + abs(alignment_offset)
-                
-                # Ensure indices are valid
-                if segment_idx < len(segments) and vocab_idx < len(filtered_vocab):
-                    segment = segments[segment_idx]
-                    vocab_entry = filtered_vocab[vocab_idx]
-                    
-                    aligned_pair = AlignedPair(
-                        vocabulary_entry=vocab_entry,
-                        audio_segment=segment,
-                        alignment_confidence=0.7,  # Default confidence for static alignment
-                        audio_file_path=""
-                    )
-                    aligned_pairs.append(aligned_pair)
-            
-            logger.info(f"🔧 Static alignment complete: created {len(aligned_pairs)} pairs")
+                aligned_pair = AlignedPair(
+                    vocabulary_entry=filtered_vocab[i],
+                    audio_segment=segments[i],
+                    alignment_confidence=0.7,
+                    audio_file_path=""
+                )
+                aligned_pairs.append(aligned_pair)
+
+            logger.info(f"🔧 Positional alignment complete: created {len(aligned_pairs)} pairs")
         
         # Stage 7: Final Alignment Processing and Audio Clip Generation
         if not (enable_speech_verification and WHISPER_AVAILABLE):
