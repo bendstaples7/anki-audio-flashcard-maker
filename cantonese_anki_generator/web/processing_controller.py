@@ -14,6 +14,7 @@ import numpy as np
 from cantonese_anki_generator.processors.google_sheets_parser import GoogleSheetsParser
 from cantonese_anki_generator.audio.loader import AudioLoader
 from cantonese_anki_generator.audio.smart_segmentation import SmartBoundaryDetector
+from cantonese_anki_generator.audio.envelope_segmentation import EnvelopeSegmenter
 from cantonese_anki_generator.models import VocabularyEntry, AudioSegment, AlignedPair
 from cantonese_anki_generator.alignment.global_reassignment import GlobalReassignmentCoordinator
 from .session_models import AlignmentSession, TermAlignment, generate_session_id, generate_term_id
@@ -46,6 +47,7 @@ class ProcessingController:
         self.parser = GoogleSheetsParser()
         self.audio_loader = AudioLoader(target_sample_rate=sample_rate)
         self.boundary_detector = SmartBoundaryDetector(sample_rate=sample_rate)
+        self.envelope_segmenter = EnvelopeSegmenter(sample_rate=sample_rate)
         self.audio_extractor = AudioExtractor(temp_dir=temp_dir, sample_rate=sample_rate)
         self.regeneration_progress_callback = None  # Progress callback for regeneration
         
@@ -62,7 +64,8 @@ class ProcessingController:
             self.speech_verifier = None
             self.dynamic_aligner = None
     
-    def process_upload(self, doc_url: str, audio_file_path: str) -> str:
+    def process_upload(self, doc_url: str, audio_file_path: str,
+                       stage_callback=None) -> str:
         """
         Process uploaded files and create an alignment session.
         
@@ -72,6 +75,7 @@ class ProcessingController:
         Args:
             doc_url: URL of Google Docs/Sheets with vocabulary
             audio_file_path: Path to uploaded audio file
+            stage_callback: Optional callable(stage_name: str) for progress reporting
             
         Returns:
             Session ID of the created alignment session
@@ -79,11 +83,16 @@ class ProcessingController:
         Raises:
             Exception: If processing fails at any stage
         """
+        def _report(stage: str):
+            if stage_callback:
+                stage_callback(stage)
+
         logger.info("="*60)
         logger.info("PROCESSING UPLOAD")
         logger.info("="*60)
         
         # Stage 1: Extract vocabulary
+        _report("Extracting vocabulary...")
         logger.info("📄 Extracting vocabulary from spreadsheet...")
         vocab_entries = self._extract_vocabulary(doc_url)
         logger.info(f"✓ Found {len(vocab_entries)} terms:")
@@ -91,6 +100,7 @@ class ProcessingController:
             logger.info(f"   {i}. {entry.english} → {entry.cantonese}")
         
         # Stage 2: Load audio
+        _report("Loading audio...")
         logger.info("")
         logger.info("🎵 Loading audio file...")
         audio_data, sample_rate = self._load_audio(audio_file_path)
@@ -98,12 +108,14 @@ class ProcessingController:
         logger.info(f"✓ Audio: {audio_duration:.1f} seconds")
         
         # Stage 3: Segment audio
+        _report("Segmenting audio...")
         logger.info("")
         logger.info(f"✂️  Segmenting audio into {len(vocab_entries)} parts...")
         segments = self._segment_audio(audio_data, len(vocab_entries))
         logger.info(f"✓ Created {len(segments)} segments")
         
         # Stage 4: Pair terms with segments
+        _report("Pairing terms with audio...")
         logger.info("")
         logger.info("🔗 Pairing terms with audio...")
         aligned_pairs = self._create_aligned_pairs(vocab_entries, segments)
@@ -114,6 +126,7 @@ class ProcessingController:
         self._calculate_confidence_scores(aligned_pairs, audio_data, sample_rate)
         
         # Stage 6: VERIFY WITH WHISPER (before creating session)
+        _report("Verifying with speech recognition...")
         logger.info("")
         logger.info("="*60)
         logger.info("🎤 VERIFYING WITH SPEECH RECOGNITION")
@@ -123,6 +136,7 @@ class ProcessingController:
         )
         
         # Stage 7: GLOBAL REASSIGNMENT with boundary refinement
+        _report("Optimizing alignment...")
         logger.info("")
         logger.info("="*60)
         logger.info("🌐 GLOBAL TRANSCRIPTION-BASED REASSIGNMENT")
@@ -132,6 +146,7 @@ class ProcessingController:
         )
         
         # Stage 8: Create session with verified alignments
+        _report("Creating session...")
         logger.info("")
         logger.info("💾 Creating session with verified alignments...")
         session_id = self._create_alignment_session(
@@ -164,6 +179,7 @@ class ProcessingController:
             logger.info("✓ Session directory doesn't exist yet (first run)")
         
         # Stage 9: Extract audio files with verified boundaries
+        _report("Extracting audio clips...")
         logger.info("")
         logger.info("🎧 Extracting audio clips with reassigned boundaries...")
         session = self.session_manager.get_session(session_id)
@@ -243,12 +259,18 @@ class ProcessingController:
             Exception: If segmentation fails
         """
         try:
-            segments = self.boundary_detector.segment_audio(
-                audio_data, expected_count, start_offset=0.0
+            segments = self.envelope_segmenter.segment_audio(
+                audio_data, expected_count
             )
             
             if not segments:
                 raise ValueError("No audio segments created")
+
+            if len(segments) != expected_count:
+                raise ValueError(
+                    f"Segment count mismatch: expected {expected_count}, "
+                    f"got {len(segments)}"
+                )
             
             return segments
             

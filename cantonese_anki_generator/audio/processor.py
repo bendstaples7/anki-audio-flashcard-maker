@@ -15,6 +15,7 @@ from .loader import AudioLoader, AudioValidationError
 from .vad import VoiceActivityDetector, SpeechRegion
 from .segmentation import WordSegmenter, WordBoundary
 from .smart_segmentation import SmartBoundaryDetector
+from .envelope_segmentation import EnvelopeSegmenter
 from .clip_generator import AudioClipGenerator
 
 
@@ -43,6 +44,7 @@ class AudioProcessor:
         self.vad = VoiceActivityDetector(sample_rate=min(sample_rate, 16000))  # WebRTC VAD limitation
         self.segmenter = WordSegmenter(sample_rate=sample_rate)
         self.smart_detector = SmartBoundaryDetector(sample_rate=sample_rate)  # Our winning approach!
+        self.envelope_segmenter = EnvelopeSegmenter(sample_rate=sample_rate)
         self.clip_generator = AudioClipGenerator(sample_rate=sample_rate)
         
         # Processing statistics
@@ -106,12 +108,11 @@ class AudioProcessor:
             for i, region in enumerate(speech_regions):
                 logger.debug(f"  Region {i+1}: {region}")
             
-            # Step 3: Smart segmentation using silence gap detection
-            logger.info("Step 3: Smart segmentation using silence gap detection...")
+            # Step 3: Envelope-based segmentation
+            logger.info("Step 3: Envelope-based segmentation...")
             
-            # Use our winning smart boundary detection approach
-            audio_segments = self.smart_detector.segment_audio(
-                audio_data, expected_word_count, start_offset=1.0
+            audio_segments = self.envelope_segmenter.segment_audio(
+                audio_data, expected_word_count
             )
             
             # Generate audio clip files

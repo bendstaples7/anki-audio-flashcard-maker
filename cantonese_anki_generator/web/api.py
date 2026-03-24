@@ -1070,232 +1070,195 @@ def get_audio_segment(session_id: str, term_id: str):
 @bp.route('/process', methods=['POST'])
 def process_files():
     """
-    Process uploaded files and create alignment session.
-    Task 7.2: Enhanced with authentication validation before processing
-    
+    Start processing uploaded files in a background thread.
+
+    Returns immediately with a job_id.  The frontend polls
+    /process/status/<job_id> until the job completes or fails.
+
     Expects JSON body:
-        {
-            "doc_url": "https://docs.google.com/...",
-            "audio_filepath": "/path/to/audio.mp3"
-        }
-        
-    Returns:
-        JSON response with session ID
-        
-    Requirements: 4.4, 4.5
+        { "doc_url": "...", "audio_filepath": "..." }
+
+    Returns 202 with { "success": true, "data": { "job_id": "..." } }
     """
+    import threading
+    from cantonese_anki_generator.web.job_tracker import job_tracker
+    from cantonese_anki_generator.web.session_models import convert_numpy_types
+
     try:
-        from cantonese_anki_generator.web.processing_controller import ProcessingController
-        from cantonese_anki_generator.web.session_manager import SessionManager
-        from cantonese_anki_generator.web.audio_extractor import AudioExtractor
-        from cantonese_anki_generator.web.session_models import convert_numpy_types
-        
-        # Parse request data
+        # ---- Parse & validate request (fast, stays synchronous) ----
         try:
             data = request.get_json()
         except Exception as e:
             logger.warning(f"Failed to parse JSON data: {e}")
-            response = format_error_response(
+            return jsonify(format_error_response(
                 error_message='Invalid JSON data provided',
                 error_code=ErrorCode.INVALID_JSON,
                 action_required=ActionRequired.RETRY
-            )
-            return jsonify(response), 400
-        
+            )), 400
+
         if not data:
-            logger.warning("No JSON data provided in process request")
-            response = format_error_response(
+            return jsonify(format_error_response(
                 error_message='No JSON data provided',
                 error_code=ErrorCode.MISSING_DATA,
                 action_required=ActionRequired.RETRY
-            )
-            return jsonify(response), 400
-        
+            )), 400
+
         doc_url = data.get('doc_url')
         audio_filepath = data.get('audio_filepath')
-        
+
         if not doc_url or not audio_filepath:
-            logger.warning(f"Missing required fields: doc_url={bool(doc_url)}, audio_filepath={bool(audio_filepath)}")
-            response = format_error_response(
+            return jsonify(format_error_response(
                 error_message='doc_url and audio_filepath are required',
                 error_code=ErrorCode.MISSING_FIELDS,
                 action_required=ActionRequired.UPLOAD_FILES
-            )
-            return jsonify(response), 400
-        
-        # Task 7.2: Check authentication before processing
-        # This prevents processing from starting if authentication is invalid
+            )), 400
+
+        # ---- Auth check (fast) ----
         try:
             authenticator = GoogleDocsAuthenticator(mode='web')
             token_status = authenticator.get_token_status()
-            
+
             if not token_status['valid'] or token_status['expired']:
-                # Tokens are invalid or expired - need authentication
                 logger.warning("Processing blocked: authentication required")
-                
-                # Generate authorization URL
                 try:
-                    authorization_url, state_token = authenticator.get_authorization_url()
-                    
-                    # State token is stored in file-based storage by the authenticator
-                    
-                    error_message = (
-                        "Authentication required to process Google Docs/Sheets. "
-                        "Please authenticate first:\n"
-                        "1. Click the authorization link below\n"
-                        "2. Sign in with your Google account\n"
-                        "3. Grant the requested permissions\n"
-                        "4. Return here and try processing again\n\n"
-                        "Your uploaded files have been preserved and will be available after authentication."
-                    )
-                    
+                    authorization_url, _ = authenticator.get_authorization_url()
                     return authentication_required_response(
-                        message=error_message,
+                        message="Authentication required. Please authenticate and try again.",
                         authorization_url=authorization_url,
                         files_preserved=True
                     )
-                    
                 except Exception as e:
                     logger.error(f"Failed to generate authorization URL: {e}", exc_info=True)
-                    response = format_error_response(
-                        error_message='Authentication required but failed to generate authorization URL. Please ensure credentials.json is configured correctly.',
+                    return jsonify(format_error_response(
+                        error_message='Authentication required but failed to generate authorization URL.',
                         error_code=ErrorCode.AUTH_URL_ERROR,
                         action_required=ActionRequired.CONFIGURE_CREDENTIALS,
                         files_preserved=True
-                    )
-                    return jsonify(response), 500
-                    
+                    )), 500
         except Exception as e:
             logger.error(f"Authentication check failed: {e}", exc_info=True)
-            response = format_error_response(
-                error_message=f'Failed to check authentication status: {str(e)}. Please try again.',
+            return jsonify(format_error_response(
+                error_message=f'Failed to check authentication status: {str(e)}',
                 error_code=ErrorCode.AUTH_CHECK_ERROR,
                 action_required=ActionRequired.RETRY,
                 files_preserved=True
-            )
-            return jsonify(response), 500
-        
-        # Verify audio file exists
-        if not os.path.exists(audio_filepath):
-            logger.error(f"Audio file not found: {audio_filepath}")
-            response = format_error_response(
+            )), 500
+
+        # ---- Path traversal protection ----
+        upload_dir = os.path.realpath(current_app.config['UPLOAD_FOLDER'])
+        real_audio = os.path.realpath(audio_filepath)
+        if not real_audio.startswith(upload_dir + os.sep) and real_audio != upload_dir:
+            logger.warning("Path traversal attempt blocked: %s", audio_filepath)
+            return jsonify(format_error_response(
                 error_message='Audio file not found. Please upload the file again.',
                 error_code=ErrorCode.FILE_NOT_FOUND,
                 action_required=ActionRequired.UPLOAD_FILES
-            )
-            return jsonify(response), 404
-        
-        # Get or create processing controller
-        session_manager = current_app.config.get('SESSION_MANAGER')
-        if not session_manager:
-            session_manager = SessionManager(storage_dir=current_app.config.get('SESSION_FOLDER'))
-            current_app.config['SESSION_MANAGER'] = session_manager
-        
-        audio_extractor = current_app.config.get('AUDIO_EXTRACTOR')
-        if not audio_extractor:
-            audio_extractor = AudioExtractor(temp_dir='temp/audio_segments')
-            current_app.config['AUDIO_EXTRACTOR'] = audio_extractor
-        
-        processing_controller = ProcessingController(
-            session_manager=session_manager,
-            temp_dir='temp/audio_segments'
-        )
-        
-        # Process files and create session
-        logger.info(f"Starting processing for doc_url={doc_url}, audio={audio_filepath}")
-        
-        try:
-            session_id = processing_controller.process_upload(doc_url, audio_filepath)
-        except ValueError as e:
-            # Handle validation errors from processing
-            logger.warning(f"Processing validation error: {e}")
-            response = format_error_response(
-                error_message=str(e),
-                error_code=ErrorCode.PROCESSING_VALIDATION_ERROR,
-                action_required=ActionRequired.RETRY
-            )
-            return jsonify(response), 400
-        except FileNotFoundError as e:
-            logger.error(f"File not found during processing: {e}")
-            response = format_error_response(
-                error_message='Required file not found during processing. Please try uploading again.',
-                error_code=ErrorCode.PROCESSING_FILE_NOT_FOUND,
+            )), 404
+
+        # ---- File check (fast) ----
+        if not os.path.isfile(real_audio):
+            return jsonify(format_error_response(
+                error_message='Audio file not found. Please upload the file again.',
+                error_code=ErrorCode.FILE_NOT_FOUND,
                 action_required=ActionRequired.UPLOAD_FILES
-            )
-            return jsonify(response), 404
-        except HttpError as e:
-            # Handle Google API errors (including authentication errors)
-            logger.error(f"Google API error during processing: {e.resp.status} - {e}")
-            
-            if e.resp.status == 401:
-                # Authentication error during processing
-                try:
-                    authenticator = GoogleDocsAuthenticator(mode='web')
-                    authorization_url, state_token = authenticator.get_authorization_url()
-                    
-                    # State token is stored in file-based storage by the authenticator
-                    
-                    error_message = (
-                        "Authentication expired during processing. "
-                        "Please re-authenticate and try again. "
-                        "Your uploaded files have been preserved."
-                    )
-                    
-                    return authentication_expired_response(
-                        authorization_url=authorization_url,
-                        files_preserved=True
-                    )
-                    
-                except Exception as auth_error:
-                    logger.error(f"Failed to generate authorization URL: {auth_error}", exc_info=True)
-                    return authentication_expired_response(files_preserved=True)
-            else:
-                response = format_error_response(
-                    error_message=f'Google API error (HTTP {e.resp.status}): {str(e)}. Please check your document permissions.',
-                    error_code=ErrorCode.GOOGLE_API_ERROR,
-                    action_required=ActionRequired.CHECK_PERMISSIONS,
-                    files_preserved=True
+            )), 404
+
+        # ---- Kick off background processing ----
+        # Use the validated canonical path from here on.
+        audio_filepath = real_audio
+
+        # ---- Kick off background processing ----
+        job = job_tracker.create()
+
+        # Capture app config values we need inside the thread
+        session_folder = current_app.config.get('SESSION_FOLDER')
+
+        def _run_processing():
+            from cantonese_anki_generator.web.processing_controller import ProcessingController
+            from cantonese_anki_generator.web.session_manager import SessionManager
+            from cantonese_anki_generator.web.audio_extractor import AudioExtractor
+
+            try:
+                sm = SessionManager(storage_dir=session_folder)
+                pc = ProcessingController(
+                    session_manager=sm,
+                    temp_dir='temp/audio_segments'
                 )
-                return jsonify(response), 500
-                
-        except Exception as e:
-            logger.error(f"Processing failed: {e}", exc_info=True)
-            return processing_error_response(
-                error_details=str(e),
-                files_preserved=True
-            )
-        
-        # Get session data
-        session = session_manager.get_session(session_id)
-        
-        if not session:
-            logger.error(f"Session not found after creation: {session_id}")
-            response = format_error_response(
-                error_message='Failed to create session',
-                error_code=ErrorCode.SESSION_CREATION_FAILED,
-                action_required=ActionRequired.RETRY
-            )
-            return jsonify(response), 500
-        
-        logger.info(f"Processing complete: session_id={session_id}, terms={len(session.terms)}")
-        
+
+                session_id = pc.process_upload(
+                    doc_url, audio_filepath,
+                    stage_callback=lambda stage: job_tracker.update_stage(job.job_id, stage)
+                )
+
+                session = sm.get_session(session_id)
+                if not session:
+                    job_tracker.fail(job.job_id, "Session not found after creation")
+                    return
+
+                job_tracker.complete(
+                    job.job_id,
+                    session_id=session_id,
+                    total_terms=len(session.terms),
+                    audio_duration=float(convert_numpy_types(session.audio_duration)),
+                    low_confidence_count=sum(
+                        1 for t in session.terms
+                        if convert_numpy_types(t.confidence_score) < 0.6
+                    ),
+                )
+            except Exception as e:
+                logger.error(f"Background processing failed: {e}", exc_info=True)
+                job_tracker.fail(job.job_id, "Processing failed. Check server logs for details.")
+
+        thread = threading.Thread(target=_run_processing, daemon=True)
+        thread.start()
+
         return jsonify({
             'success': True,
-            'message': 'Processing complete',
-            'data': {
-                'session_id': session_id,
-                'total_terms': len(session.terms),
-                'audio_duration': convert_numpy_types(session.audio_duration),
-                'low_confidence_count': sum(1 for term in session.terms if convert_numpy_types(term.confidence_score) < 0.6)
-            }
-        }), 200
-        
+            'message': 'Processing started',
+            'data': {'job_id': job.job_id}
+        }), 202
+
     except Exception as e:
-        logger.error(f"Processing failed with unexpected error: {e}", exc_info=True)
-        return processing_error_response(
-            error_details=str(e),
-            files_preserved=True
-        )
+        logger.error(f"Process endpoint failed: {e}", exc_info=True)
+        return processing_error_response(error_details=str(e), files_preserved=True)
+
+
+@bp.route('/process/status/<job_id>', methods=['GET'])
+def process_status(job_id: str):
+    """
+    Poll the status of a background processing job.
+
+    Returns:
+        200 with status "pending" | "running" | "complete" | "failed"
+        When complete, includes session_id and term data.
+    """
+    from cantonese_anki_generator.web.job_tracker import job_tracker
+    from cantonese_anki_generator.web.session_models import convert_numpy_types
+
+    job = job_tracker.get(job_id)
+    if not job:
+        return jsonify({'success': False, 'error': 'Job not found'}), 404
+
+    payload = {
+        'success': True,
+        'data': {
+            'job_id': job.job_id,
+            'status': job.status,
+            'stage': job.stage,
+        }
+    }
+
+    if job.status == 'complete':
+        payload['data'].update({
+            'session_id': job.session_id,
+            'total_terms': job.total_terms,
+            'audio_duration': convert_numpy_types(job.audio_duration),
+            'low_confidence_count': job.low_confidence_count,
+        })
+    elif job.status == 'failed':
+        payload['data']['error'] = job.error
+
+    return jsonify(payload), 200
 
 
 @bp.route('/session/<session_id>/save', methods=['POST'])
