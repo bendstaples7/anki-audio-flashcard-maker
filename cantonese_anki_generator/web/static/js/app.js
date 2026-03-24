@@ -611,7 +611,13 @@ async function handleFormSubmit(event) {
             let statusResp;
             let statusData;
             try {
-                statusResp = await fetchWithRetry(`${API_BASE}/process/status/${jobId}`, {}, 1);
+                const pollController = new AbortController();
+                const pollTimeout = setTimeout(() => pollController.abort(), 15000); // 15s timeout for polls
+                statusResp = await fetch(
+                    `${API_BASE}/process/status/${jobId}`,
+                    { signal: pollController.signal }
+                );
+                clearTimeout(pollTimeout);
                 statusData = await statusResp.json();
             } catch (pollError) {
                 pollFailures++;
