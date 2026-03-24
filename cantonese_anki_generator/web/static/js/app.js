@@ -576,26 +576,21 @@ async function handleFormSubmit(event) {
         // Store uploaded file info
         AppState.uploadedFiles.audioFilePath = uploadData.data.audio_filepath;
         
-        // Process files and create session with retry
-        updateProgress(50, 'Running automatic alignment...');
+        // Kick off processing (returns immediately with a job_id)
+        updateProgress(50, 'Starting alignment...');
         
         const processResponse = await fetchWithRetry(`${API_BASE}/process`, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 doc_url: AppState.uploadedFiles.url,
                 audio_filepath: uploadData.data.audio_filepath
             })
         });
         
-        updateProgress(80, 'Creating alignment session...');
-        
         const processData = await processResponse.json();
         
         if (!processResponse.ok) {
-            // Check for authentication error
             if (processResponse.status === 401 || processData.error_code === 'AUTHENTICATION_REQUIRED') {
                 handleAuthenticationError(processData);
                 throw new Error('Authentication required');
@@ -603,19 +598,47 @@ async function handleFormSubmit(event) {
             throw new Error(processData.error || 'Processing failed');
         }
         
+        const jobId = processData.data.job_id;
+        
+        // Poll for completion — no timeout risk since each poll is a tiny GET
+        let jobDone = false;
+        let jobResult = null;
+        while (!jobDone) {
+            await new Promise(r => setTimeout(r, 2000)); // poll every 2s
+            
+            const statusResp = await fetch(`${API_BASE}/process/status/${jobId}`);
+            const statusData = await statusResp.json();
+            
+            if (!statusResp.ok) {
+                throw new Error(statusData.error || 'Failed to check processing status');
+            }
+            
+            const status = statusData.data.status;
+            const stage = statusData.data.stage || 'Processing...';
+            
+            if (status === 'running' || status === 'pending') {
+                updateProgress(60, stage);
+            } else if (status === 'complete') {
+                jobDone = true;
+                jobResult = statusData.data;
+            } else if (status === 'failed') {
+                throw new Error(statusData.data.error || 'Processing failed');
+            }
+        }
+        
         updateProgress(100, 'Complete!');
         
         // Store session ID
-        AppState.sessionId = processData.data.session_id;
+        AppState.sessionId = jobResult.session_id;
         
         // Update URL with session ID for sharing/bookmarking (Requirement 8.3)
         updateUrlWithSessionId(AppState.sessionId);
         
         // Show success message
-        const lowConfCount = processData.data.low_confidence_count;
+        const lowConfCount = jobResult.low_confidence_count;
         const message = lowConfCount > 0
-            ? `Processing complete! ${processData.data.total_terms} terms aligned (${lowConfCount} need review).`
-            : `Processing complete! ${processData.data.total_terms} terms aligned successfully.`;
+            ? `Processing complete! ${jobResult.total_terms} terms aligned (${lowConfCount} need review).`
+            : `Processing complete! ${jobResult.total_terms} terms aligned successfully.`;
         
         showSuccess(message);
         
