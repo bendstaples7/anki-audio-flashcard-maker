@@ -136,6 +136,10 @@ class EnvelopeSegmenter:
         for start in range(0, n - win + 1, hop):
             w = audio_data[start : start + win]
             frames.append(float(np.sqrt(np.mean(w ** 2))))
+        # Short buffer: if audio is shorter than one window, return a
+        # single-frame RMS so downstream logic always has ≥1 frame.
+        if len(frames) == 0 and n > 0:
+            frames.append(float(np.sqrt(np.mean(audio_data ** 2))))
         return np.array(frames, dtype=np.float64), hop
 
     def _find_valleys(
@@ -196,14 +200,41 @@ class EnvelopeSegmenter:
     def _fill_missing_splits(
         current: List[int], needed: int, total_frames: int
     ) -> List[int]:
-        """Bisect the longest span until we have enough splits."""
+        """Bisect the longest span until we have enough splits.
+
+        Falls back to evenly spaced splits when total_frames is too
+        small for bisection to produce unique midpoints.
+        """
+        if needed <= 0:
+            return list(current)
+
+        # When there aren't enough distinct frame positions for unique
+        # bisection, produce evenly spaced float-derived indices.  This
+        # can yield duplicates when total_frames is tiny, but that's the
+        # best we can do — the caller will still get *needed* values.
+        if total_frames < 2 or needed >= total_frames:
+            return [
+                max(0, min(total_frames - 1,
+                           int(round((i + 1) * total_frames / (needed + 1)))))
+                for i in range(needed)
+            ]
+
         splits = list(current)
+        seen: set = set(splits)
         while len(splits) < needed:
-            bounds = [0] + splits + [total_frames]
+            bounds = [0] + sorted(splits) + [total_frames]
             longest_idx = max(
                 range(len(bounds) - 1), key=lambda i: bounds[i + 1] - bounds[i]
             )
             mid = (bounds[longest_idx] + bounds[longest_idx + 1]) // 2
+            if mid in seen:
+                # Bisection can't produce new points — fall back to even spacing
+                return [
+                    max(0, min(total_frames - 1,
+                               int(round((i + 1) * total_frames / (needed + 1)))))
+                    for i in range(needed)
+                ]
+            seen.add(mid)
             splits.append(mid)
             splits.sort()
         return splits

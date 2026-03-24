@@ -420,12 +420,28 @@ def process_pipeline(google_doc_url: str, audio_file: Path, output_path: Path,
             # valleys to split the audio into exactly N segments.
             segmenter = EnvelopeSegmenter(sample_rate=sample_rate)
 
-            logger.info(f"Using envelope-based segmentation")
-            logger.info(f"Audio data shape: {audio_data.shape}, sample_rate: {sample_rate}")
-            logger.info(f"Audio duration: {len(audio_data) / sample_rate:.2f}s")
-            logger.info(f"Expected segments: {len(vocab_entries)}")
+            logger.info("Using envelope-based segmentation")
+            logger.info("Audio data shape: %s, sample_rate: %s", audio_data.shape, sample_rate)
+            logger.info("Audio duration: %.2fs", len(audio_data) / sample_rate)
+            logger.info("Expected segments: %d", len(vocab_entries))
 
-            segments = segmenter.segment_audio(audio_data, len(vocab_entries))
+            # Apply manual_start_offset: trim leading audio so the
+            # segmenter only sees the region after the offset.
+            seg_audio = audio_data
+            offset = 0.0
+            if manual_start_offset is not None and manual_start_offset > 0:
+                offset = manual_start_offset
+                trim_samples = int(offset * sample_rate)
+                seg_audio = audio_data[trim_samples:]
+                logger.info("Applied manual_start_offset: trimmed first %.3fs", offset)
+
+            segments = segmenter.segment_audio(seg_audio, len(vocab_entries))
+
+            # Shift segment timestamps back to the original audio timeline.
+            if offset > 0:
+                for seg in segments:
+                    seg.start_time += offset
+                    seg.end_time += offset
 
             # Log segment summary
             logger.info(f"🔍 Audio segments:")

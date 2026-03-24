@@ -265,6 +265,12 @@ class ProcessingController:
             
             if not segments:
                 raise ValueError("No audio segments created")
+
+            if len(segments) != expected_count:
+                raise ValueError(
+                    f"Segment count mismatch: expected {expected_count}, "
+                    f"got {len(segments)}"
+                )
             
             return segments
             

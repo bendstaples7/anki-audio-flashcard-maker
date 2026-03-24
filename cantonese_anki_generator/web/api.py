@@ -1144,8 +1144,19 @@ def process_files():
                 files_preserved=True
             )), 500
 
+        # ---- Path traversal protection ----
+        upload_dir = os.path.realpath(current_app.config['UPLOAD_FOLDER'])
+        real_audio = os.path.realpath(audio_filepath)
+        if not real_audio.startswith(upload_dir + os.sep) and real_audio != upload_dir:
+            logger.warning("Path traversal attempt blocked: %s", audio_filepath)
+            return jsonify(format_error_response(
+                error_message='Audio file not found. Please upload the file again.',
+                error_code=ErrorCode.FILE_NOT_FOUND,
+                action_required=ActionRequired.UPLOAD_FILES
+            )), 404
+
         # ---- File check (fast) ----
-        if not os.path.exists(audio_filepath):
+        if not os.path.exists(real_audio):
             return jsonify(format_error_response(
                 error_message='Audio file not found. Please upload the file again.',
                 error_code=ErrorCode.FILE_NOT_FOUND,
@@ -1192,7 +1203,7 @@ def process_files():
                 )
             except Exception as e:
                 logger.error(f"Background processing failed: {e}", exc_info=True)
-                job_tracker.fail(job.job_id, str(e))
+                job_tracker.fail(job.job_id, "Processing failed. Check server logs for details.")
 
         thread = threading.Thread(target=_run_processing, daemon=True)
         thread.start()

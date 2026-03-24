@@ -579,7 +579,7 @@ async function handleFormSubmit(event) {
         // Kick off processing (returns immediately with a job_id)
         updateProgress(50, 'Starting alignment...');
         
-        const processResponse = await fetchWithRetry(`${API_BASE}/process`, {
+        const processResponse = await fetch(`${API_BASE}/process`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
