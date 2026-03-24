@@ -430,6 +430,12 @@ def process_pipeline(google_doc_url: str, audio_file: Path, output_path: Path,
             seg_audio = audio_data
             offset = 0.0
             if manual_start_offset is not None and manual_start_offset > 0:
+                audio_duration_s = len(audio_data) / sample_rate
+                if manual_start_offset >= audio_duration_s:
+                    raise ValueError(
+                        f"manual_start_offset ({manual_start_offset:.2f}s) "
+                        f"exceeds audio duration ({audio_duration_s:.2f}s)"
+                    )
                 offset = manual_start_offset
                 trim_samples = int(offset * sample_rate)
                 seg_audio = audio_data[trim_samples:]

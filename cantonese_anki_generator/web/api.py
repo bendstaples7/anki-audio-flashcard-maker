@@ -1156,12 +1156,16 @@ def process_files():
             )), 404
 
         # ---- File check (fast) ----
-        if not os.path.exists(real_audio):
+        if not os.path.isfile(real_audio):
             return jsonify(format_error_response(
                 error_message='Audio file not found. Please upload the file again.',
                 error_code=ErrorCode.FILE_NOT_FOUND,
                 action_required=ActionRequired.UPLOAD_FILES
             )), 404
+
+        # ---- Kick off background processing ----
+        # Use the validated canonical path from here on.
+        audio_filepath = real_audio
 
         # ---- Kick off background processing ----
         job = job_tracker.create()

@@ -103,6 +103,12 @@ class EnvelopeSegmenter:
                 split_frames, needed, len(rms_env)
             )
 
+        # Deduplicate: collapse repeated frame indices so we don't
+        # produce zero-length segments.  This can reduce the split
+        # count below *needed*, but that only happens when the audio
+        # is too short to meaningfully split further.
+        split_frames = sorted(set(split_frames))
+
         # Convert frame indices -> seconds
         split_times = [f * hop_samples / self.sample_rate for f in split_frames]
 
