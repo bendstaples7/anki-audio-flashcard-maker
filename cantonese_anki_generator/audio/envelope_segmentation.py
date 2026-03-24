@@ -109,7 +109,7 @@ class EnvelopeSegmenter:
         logger.info("Split times (s): %s", [round(t, 3) for t in split_times])
 
         # 4. Build segments
-        boundaries = [0.0] + split_times + [total_duration]
+        boundaries = [0.0, *split_times, total_duration]
         segments: List[AudioSegment] = []
         for i in range(len(boundaries) - 1):
             segments.append(
@@ -203,37 +203,49 @@ class EnvelopeSegmenter:
         """Bisect the longest span until we have enough splits.
 
         Falls back to evenly spaced splits when total_frames is too
-        small for bisection to produce unique midpoints.
+        small for bisection to produce unique midpoints.  The returned
+        list is always strictly increasing and clamped to
+        [0, total_frames - 1].
         """
         if needed <= 0:
             return list(current)
 
-        # When there aren't enough distinct frame positions for unique
-        # bisection, produce evenly spaced float-derived indices.  This
-        # can yield duplicates when total_frames is tiny, but that's the
-        # best we can do — the caller will still get *needed* values.
-        if total_frames < 2 or needed >= total_frames:
-            return [
-                max(0, min(total_frames - 1,
-                           int(round((i + 1) * total_frames / (needed + 1)))))
-                for i in range(needed)
+        def _even_spaced(n: int, span: int) -> List[int]:
+            """Produce *n* strictly increasing indices in [0, span)."""
+            if span <= 0:
+                return [0] * n
+            raw = [
+                max(0, min(span - 1,
+                           int(round((i + 1) * span / (n + 1)))))
+                for i in range(n)
             ]
+            # Enforce strict monotonicity: bump duplicates forward.
+            deduped: List[int] = []
+            prev = -1
+            for v in raw:
+                v = max(v, prev + 1)
+                if v >= span:
+                    v = span - 1          # clamp — can't go further
+                deduped.append(v)
+                prev = v
+            return deduped
+
+        # When there aren't enough distinct frame positions for unique
+        # bisection, fall back to evenly spaced indices.
+        if total_frames < 2 or needed >= total_frames:
+            return _even_spaced(needed, total_frames)
 
         splits = list(current)
         seen: set = set(splits)
         while len(splits) < needed:
-            bounds = [0] + sorted(splits) + [total_frames]
+            bounds = [0, *sorted(splits), total_frames]
             longest_idx = max(
                 range(len(bounds) - 1), key=lambda i: bounds[i + 1] - bounds[i]
             )
             mid = (bounds[longest_idx] + bounds[longest_idx + 1]) // 2
             if mid in seen:
-                # Bisection can't produce new points — fall back to even spacing
-                return [
-                    max(0, min(total_frames - 1,
-                               int(round((i + 1) * total_frames / (needed + 1)))))
-                    for i in range(needed)
-                ]
+                # Bisection can't produce new points — fall back
+                return _even_spaced(needed, total_frames)
             seen.add(mid)
             splits.append(mid)
             splits.sort()
