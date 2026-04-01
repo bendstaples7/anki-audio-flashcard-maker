@@ -112,19 +112,27 @@ if command -v git &> /dev/null && git rev-parse --git-dir &> /dev/null; then
         CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
         if [ "$CURRENT_BRANCH" != "main" ]; then
             echo "Switching to main branch..."
-            git checkout main 2>/dev/null
+            if ! git checkout main 2>/dev/null; then
+                echo "WARNING: Could not switch to main. Launching with current version."
+            fi
         fi
-        LOCAL=$(git rev-parse HEAD)
-        REMOTE=$(git rev-parse origin/main)
-        if [ "$LOCAL" != "$REMOTE" ]; then
-            echo "Pulling latest changes..."
-            git pull origin main
-            echo "Checking dependencies..."
-            pip install -r requirements.txt -q 2>/dev/null
-            pip install -e . -q 2>/dev/null
-            echo "Updated successfully."
+        # Confirm we're on main before pulling
+        CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+        if [ "$CURRENT_BRANCH" = "main" ]; then
+            LOCAL=$(git rev-parse HEAD)
+            REMOTE=$(git rev-parse origin/main)
+            if [ "$LOCAL" != "$REMOTE" ]; then
+                echo "Pulling latest changes..."
+                git pull origin main
+                echo "Checking dependencies..."
+                pip install -r requirements.txt -q 2>/dev/null
+                pip install -e . -q 2>/dev/null
+                echo "Updated successfully."
+            else
+                echo "Already up to date."
+            fi
         else
-            echo "Already up to date."
+            echo "WARNING: Not on main branch. Launching with current version."
         fi
     fi
     echo ""
@@ -178,19 +186,27 @@ if command -v git &> /dev/null && git rev-parse --git-dir &> /dev/null; then
         CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
         if [ "$CURRENT_BRANCH" != "main" ]; then
             echo "Switching to main branch..."
-            git checkout main 2>/dev/null
+            if ! git checkout main 2>/dev/null; then
+                echo "WARNING: Could not switch to main. Launching with current version."
+            fi
         fi
-        LOCAL=$(git rev-parse HEAD)
-        REMOTE=$(git rev-parse origin/main)
-        if [ "$LOCAL" != "$REMOTE" ]; then
-            echo "Pulling latest changes..."
-            git pull origin main
-            echo "Checking dependencies..."
-            pip install -r requirements.txt -q 2>/dev/null
-            pip install -e . -q 2>/dev/null
-            echo "Updated successfully."
+        # Confirm we're on main before pulling
+        CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+        if [ "$CURRENT_BRANCH" = "main" ]; then
+            LOCAL=$(git rev-parse HEAD)
+            REMOTE=$(git rev-parse origin/main)
+            if [ "$LOCAL" != "$REMOTE" ]; then
+                echo "Pulling latest changes..."
+                git pull origin main
+                echo "Checking dependencies..."
+                pip install -r requirements.txt -q 2>/dev/null
+                pip install -e . -q 2>/dev/null
+                echo "Updated successfully."
+            else
+                echo "Already up to date."
+            fi
         else
-            echo "Already up to date."
+            echo "WARNING: Not on main branch. Launching with current version."
         fi
     fi
     echo ""

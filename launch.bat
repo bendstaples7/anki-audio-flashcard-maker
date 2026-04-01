@@ -40,11 +40,20 @@ for /f "tokens=*" %%b in ('git rev-parse --abbrev-ref HEAD') do set CURRENT_BRAN
 if not "%CURRENT_BRANCH%"=="main" (
     echo Switching to main branch...
     git checkout main >nul 2>nul
-    if %ERRORLEVEL% neq 0 (
-        echo WARNING: Could not switch to main. Launching with current version.
-        echo.
-        goto :launch
-    )
+)
+:: Check checkout result outside the block so ERRORLEVEL is evaluated correctly
+if not "%CURRENT_BRANCH%"=="main" if errorlevel 1 (
+    echo WARNING: Could not switch to main. Launching with current version.
+    echo.
+    goto :launch
+)
+
+:: Confirm we're actually on main before pulling
+for /f "tokens=*" %%b in ('git rev-parse --abbrev-ref HEAD') do set CURRENT_BRANCH=%%b
+if not "%CURRENT_BRANCH%"=="main" (
+    echo WARNING: Not on main branch. Launching with current version.
+    echo.
+    goto :launch
 )
 
 :: Check if there are updates
@@ -56,7 +65,7 @@ if "%LOCAL%"=="%REMOTE%" (
 ) else (
     echo Pulling latest changes...
     git pull origin main
-    if %ERRORLEVEL% neq 0 (
+    if errorlevel 1 (
         echo WARNING: Pull failed. Launching with current version.
         echo.
         goto :launch
@@ -66,8 +75,8 @@ if "%LOCAL%"=="%REMOTE%" (
 
     :: Install any new dependencies
     echo Checking dependencies...
-    pip install -r requirements.txt -q >nul 2>nul
-    pip install -e . -q >nul 2>nul
+    python -m pip install -r requirements.txt -q >nul 2>nul
+    python -m pip install -e . -q >nul 2>nul
 )
 
 echo.
