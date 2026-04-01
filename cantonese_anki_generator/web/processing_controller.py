@@ -244,9 +244,67 @@ class ProcessingController:
             logger.error(f"Failed to load audio: {e}")
             raise
     
+    def _detect_leading_silence(self, audio_data: np.ndarray) -> float:
+        """
+        Detect leading silence and return the time (in seconds) where speech begins.
+
+        Uses the same algorithm as SmartBoundaryDetector: scan the first few
+        seconds with small RMS windows and require consecutive speech frames
+        before confirming.
+
+        Returns:
+            Offset in seconds to skip, or 0.0 if no significant leading silence.
+        """
+        try:
+            # Scan up to the first 10 seconds (or 80% of audio) looking for speech onset.
+            # This is more aggressive than SmartBoundaryDetector's 3s/30% because
+            # we specifically need to catch long leading silences (3-5s is common).
+            check_duration = min(10.0, len(audio_data) / self.sample_rate * 0.8)
+            check_samples = int(check_duration * self.sample_rate)
+
+            if check_samples <= 0 or check_samples >= len(audio_data):
+                return 0.0
+
+            overall_rms = float(np.sqrt(np.mean(audio_data ** 2)))
+            if overall_rms == 0:
+                return 0.0
+
+            window_size = int(0.05 * self.sample_rate)   # 50 ms
+            hop_size = int(0.02 * self.sample_rate)       # 20 ms
+            if window_size <= 0 or hop_size <= 0:
+                return 0.0
+
+            speech_threshold = max(0.015, overall_rms * 0.20)
+            consecutive = 0
+            required = 3  # 60 ms of sustained speech
+
+            for i in range(0, check_samples - window_size, hop_size):
+                window_rms = float(np.sqrt(np.mean(audio_data[i:i + window_size] ** 2)))
+                if window_rms > speech_threshold:
+                    consecutive += 1
+                    if consecutive >= required:
+                        start = (i - (consecutive - 1) * hop_size) / self.sample_rate
+                        if start >= 0.2:
+                            logger.info(
+                                f"🔍 Detected {start:.2f}s of leading silence "
+                                f"(threshold={speech_threshold:.4f}, rms={overall_rms:.4f})"
+                            )
+                            return start
+                        return 0.0
+                else:
+                    consecutive = 0
+
+            return 0.0
+        except Exception as e:
+            logger.warning(f"Leading silence detection failed: {e}")
+            return 0.0
+
     def _segment_audio(self, audio_data: np.ndarray, expected_count: int) -> List[AudioSegment]:
         """
         Segment audio into individual term segments.
+        
+        Detects and trims leading silence before segmentation so the first
+        segment starts where speech actually begins.
         
         Args:
             audio_data: Audio data array
@@ -259,8 +317,19 @@ class ProcessingController:
             Exception: If segmentation fails
         """
         try:
+            # Detect leading silence so the first segment isn't padded with dead air
+            speech_start = self._detect_leading_silence(audio_data)
+
+            if speech_start > 0:
+                trim_samples = int(speech_start * self.sample_rate)
+                trimmed_audio = audio_data[trim_samples:]
+                logger.info(f"✂️  Trimming {speech_start:.2f}s of leading silence before segmentation")
+            else:
+                trimmed_audio = audio_data
+                speech_start = 0.0
+
             segments = self.envelope_segmenter.segment_audio(
-                audio_data, expected_count
+                trimmed_audio, expected_count
             )
             
             if not segments:
@@ -271,6 +340,17 @@ class ProcessingController:
                     f"Segment count mismatch: expected {expected_count}, "
                     f"got {len(segments)}"
                 )
+
+            # Shift segment times back to absolute positions in the original audio
+            if speech_start > 0:
+                for seg in segments:
+                    seg.start_time += speech_start
+                    seg.end_time += speech_start
+                    # Re-extract audio_data from the original array so downstream
+                    # code (Whisper, clip extraction) works with correct samples
+                    s = max(0, int(seg.start_time * self.sample_rate))
+                    e = min(len(audio_data), int(seg.end_time * self.sample_rate))
+                    seg.audio_data = audio_data[s:e]
             
             return segments
             
