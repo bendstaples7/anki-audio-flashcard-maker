@@ -8,6 +8,11 @@ webrtcvad>=2.0.10
 openai-whisper>=20231117
 pypinyin>=0.50.0
 
+# Voice activity detection
+torch>=2.0.0
+torchaudio>=2.0.0
+silero-vad>=5.1
+
 # Google Docs API
 google-auth>=2.0.0
 google-auth-oauthlib>=0.5.0
