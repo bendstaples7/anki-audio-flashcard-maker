@@ -52,22 +52,31 @@ class WebShortcutCreator:
             return False
     
     def _create_windows_shortcut(self, name: str) -> bool:
-        """Create a Windows .lnk shortcut."""
+        """Create a Windows .lnk shortcut that auto-updates from GitHub."""
         try:
             import win32com.client
+            
+            project_dir = Path.cwd()
+            launch_bat = project_dir / "launch.bat"
+            
+            if not launch_bat.exists():
+                print(f"❌ launch.bat not found in {project_dir}")
+                print("   Run from the project root directory to create the shortcut.")
+                return False
             
             shell = win32com.client.Dispatch("WScript.Shell")
             shortcut_path = self.desktop_path / f"{name}.lnk"
             shortcut = shell.CreateShortCut(str(shortcut_path))
             
-            # Set shortcut properties
-            shortcut.Targetpath = sys.executable
-            shortcut.Arguments = f'-m cantonese_anki_generator.web.run'
-            shortcut.WorkingDirectory = str(Path.cwd())
-            shortcut.Description = "Cantonese Anki Generator - Web Interface with Manual Alignment"
+            # Point to launch.bat which auto-updates from GitHub before starting
+            shortcut.Targetpath = str(launch_bat)
+            shortcut.WorkingDirectory = str(project_dir)
+            shortcut.Description = "Cantonese Anki Generator - Auto-updates from GitHub"
             
             shortcut.save()
             print(f"✅ Windows shortcut created: {shortcut_path}")
+            print(f"   Points to: {launch_bat}")
+            print(f"   Will auto-update from GitHub main branch on each launch.")
             return True
             
         except ImportError:
@@ -78,7 +87,7 @@ class WebShortcutCreator:
             return False
     
     def _create_macos_shortcut(self, name: str) -> bool:
-        """Create a macOS application alias."""
+        """Create a macOS application alias that auto-updates from GitHub."""
         try:
             script_path = self.desktop_path / f"{name}.command"
             
@@ -88,6 +97,40 @@ class WebShortcutCreator:
             
             script_content = f"""#!/bin/bash
 cd {quoted_cwd}
+
+echo "============================================================"
+echo "  Cantonese Anki Generator - Auto-Update Launcher"
+echo "============================================================"
+echo ""
+
+if command -v git &> /dev/null && git rev-parse --git-dir &> /dev/null; then
+    echo "Checking for updates from GitHub..."
+    git fetch origin main 2>/dev/null
+    CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+    if [ "$CURRENT_BRANCH" != "main" ]; then
+        echo "Switching to main branch..."
+        git checkout main 2>/dev/null
+    fi
+    LOCAL=$(git rev-parse HEAD)
+    REMOTE=$(git rev-parse origin/main)
+    if [ "$LOCAL" != "$REMOTE" ]; then
+        echo "Pulling latest changes..."
+        git pull origin main
+        echo "Checking dependencies..."
+        pip install -e . -q 2>/dev/null
+        echo "Updated successfully."
+    else
+        echo "Already up to date."
+    fi
+    echo ""
+else
+    echo "WARNING: git not available. Launching with current version."
+    echo ""
+fi
+
+echo "Starting Cantonese Anki Generator..."
+echo "============================================================"
+echo ""
 {quoted_executable} -m cantonese_anki_generator.web.run
 """
             
