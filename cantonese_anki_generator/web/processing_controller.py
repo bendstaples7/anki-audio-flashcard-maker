@@ -107,45 +107,50 @@ class ProcessingController:
         audio_duration = len(audio_data) / sample_rate
         logger.info(f"✓ Audio: {audio_duration:.1f} seconds")
         
-        # Stage 3: Segment audio
-        _report("Segmenting audio...")
-        logger.info("")
-        logger.info(f"✂️  Segmenting audio into {len(vocab_entries)} parts...")
-        segments = self._segment_audio(audio_data, len(vocab_entries))
-        logger.info(f"✓ Created {len(segments)} segments")
-        
-        # Stage 4: Pair terms with segments
-        _report("Pairing terms with audio...")
-        logger.info("")
-        logger.info("🔗 Pairing terms with audio...")
-        aligned_pairs = self._create_aligned_pairs(vocab_entries, segments)
-        
-        # Stage 5: Calculate confidence
-        logger.info("")
-        logger.info("📊 Calculating confidence scores...")
-        self._calculate_confidence_scores(aligned_pairs, audio_data, sample_rate)
-        
-        # Stage 6: VERIFY WITH WHISPER (before creating session)
-        _report("Verifying with speech recognition...")
+        # Stage 3: VAD-based segmentation — detect speech bursts with Silero VAD
+        _report("Detecting speech segments...")
         logger.info("")
         logger.info("="*60)
-        logger.info("🎤 VERIFYING WITH SPEECH RECOGNITION")
+        logger.info("🎙️  SILERO VAD SEGMENTATION")
         logger.info("="*60)
-        aligned_pairs = self._verify_and_adjust_alignments(
-            aligned_pairs, audio_data, sample_rate
+
+        from cantonese_anki_generator.audio.vad_segmentation import segment_audio_with_vad
+
+        time_ranges = segment_audio_with_vad(
+            audio_data, sample_rate, expected_count=len(vocab_entries)
         )
+
+        # Build aligned pairs from VAD-detected time ranges
+        aligned_pairs = []
+        for i, entry in enumerate(vocab_entries):
+            if i < len(time_ranges):
+                start, end = time_ranges[i]
+                s = max(0, int(start * sample_rate))
+                e = min(len(audio_data), int(end * sample_rate))
+                segment = AudioSegment(
+                    start_time=start,
+                    end_time=end,
+                    audio_data=audio_data[s:e],
+                    confidence=0.9,
+                    segment_id=f"vad_{i:03d}",
+                )
+            else:
+                logger.warning(f"⚠️  No VAD segment for '{entry.english}'")
+                segment = AudioSegment(
+                    start_time=0.0, end_time=0.0,
+                    audio_data=np.array([], dtype=audio_data.dtype),
+                    confidence=0.0, segment_id=f"vad_{i:03d}",
+                )
+            aligned_pairs.append(AlignedPair(
+                vocabulary_entry=entry,
+                audio_segment=segment,
+                alignment_confidence=segment.confidence,
+                audio_file_path="",
+            ))
+
+        logger.info(f"✓ Created {len(aligned_pairs)} aligned pairs")
         
-        # Stage 7: GLOBAL REASSIGNMENT with boundary refinement
-        _report("Optimizing alignment...")
-        logger.info("")
-        logger.info("="*60)
-        logger.info("🌐 GLOBAL TRANSCRIPTION-BASED REASSIGNMENT")
-        logger.info("="*60)
-        aligned_pairs = self._perform_global_reassignment(
-            aligned_pairs, audio_data, sample_rate
-        )
-        
-        # Stage 8: Create session with verified alignments
+        # Stage 4: Create session with VAD-derived alignments
         _report("Creating session...")
         logger.info("")
         logger.info("💾 Creating session with verified alignments...")
