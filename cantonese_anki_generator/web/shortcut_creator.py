@@ -122,8 +122,8 @@ if command -v git &> /dev/null && git rev-parse --git-dir &> /dev/null; then
                 echo "Pulling latest changes..."
                 git pull origin main
                 echo "Checking dependencies..."
-                pip install -r requirements.txt -q 2>/dev/null
-                pip install -e . -q 2>/dev/null
+                {quoted_executable} -m pip install -r requirements.txt -q 2>/dev/null
+                {quoted_executable} -m pip install -e . -q 2>/dev/null
                 echo "Updated successfully."
             else
                 echo "Already up to date."
