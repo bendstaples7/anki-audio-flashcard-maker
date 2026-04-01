@@ -66,6 +66,7 @@ if "%LOCAL%"=="%REMOTE%" (
 
     :: Install any new dependencies
     echo Checking dependencies...
+    pip install -r requirements.txt -q >nul 2>nul
     pip install -e . -q >nul 2>nul
 )
 

@@ -76,7 +76,7 @@ class WebShortcutCreator:
             shortcut.save()
             print(f"✅ Windows shortcut created: {shortcut_path}")
             print(f"   Points to: {launch_bat}")
-            print(f"   Will auto-update from GitHub main branch on each launch.")
+            print("   Will auto-update from GitHub main branch on each launch.")
             return True
             
         except ImportError:
@@ -105,22 +105,27 @@ echo ""
 
 if command -v git &> /dev/null && git rev-parse --git-dir &> /dev/null; then
     echo "Checking for updates from GitHub..."
-    git fetch origin main 2>/dev/null
-    CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
-    if [ "$CURRENT_BRANCH" != "main" ]; then
-        echo "Switching to main branch..."
-        git checkout main 2>/dev/null
-    fi
-    LOCAL=$(git rev-parse HEAD)
-    REMOTE=$(git rev-parse origin/main)
-    if [ "$LOCAL" != "$REMOTE" ]; then
-        echo "Pulling latest changes..."
-        git pull origin main
-        echo "Checking dependencies..."
-        pip install -e . -q 2>/dev/null
-        echo "Updated successfully."
+    if ! git fetch origin main 2>/dev/null; then
+        echo "WARNING: Could not reach GitHub. Launching with current version."
+        echo ""
     else
-        echo "Already up to date."
+        CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+        if [ "$CURRENT_BRANCH" != "main" ]; then
+            echo "Switching to main branch..."
+            git checkout main 2>/dev/null
+        fi
+        LOCAL=$(git rev-parse HEAD)
+        REMOTE=$(git rev-parse origin/main)
+        if [ "$LOCAL" != "$REMOTE" ]; then
+            echo "Pulling latest changes..."
+            git pull origin main
+            echo "Checking dependencies..."
+            pip install -r requirements.txt -q 2>/dev/null
+            pip install -e . -q 2>/dev/null
+            echo "Updated successfully."
+        else
+            echo "Already up to date."
+        fi
     fi
     echo ""
 else
@@ -147,20 +152,74 @@ echo ""
             return False
     
     def _create_linux_shortcut(self, name: str) -> bool:
-        """Create a Linux .desktop file."""
+        """Create a Linux .desktop file with auto-update wrapper."""
         try:
-            desktop_file_path = self.desktop_path / f"{name}.desktop"
+            # Create a launcher script with auto-update logic
+            project_dir = Path.cwd()
+            launcher_path = project_dir / "launch.sh"
             
-            # Use shlex.quote to properly escape paths with spaces
             quoted_executable = shlex.quote(sys.executable)
-            quoted_cwd = shlex.quote(str(Path.cwd()))
+            quoted_cwd = shlex.quote(str(project_dir))
+            
+            launcher_content = f"""#!/bin/bash
+cd {quoted_cwd}
+
+echo "============================================================"
+echo "  Cantonese Anki Generator - Auto-Update Launcher"
+echo "============================================================"
+echo ""
+
+if command -v git &> /dev/null && git rev-parse --git-dir &> /dev/null; then
+    echo "Checking for updates from GitHub..."
+    if ! git fetch origin main 2>/dev/null; then
+        echo "WARNING: Could not reach GitHub. Launching with current version."
+        echo ""
+    else
+        CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+        if [ "$CURRENT_BRANCH" != "main" ]; then
+            echo "Switching to main branch..."
+            git checkout main 2>/dev/null
+        fi
+        LOCAL=$(git rev-parse HEAD)
+        REMOTE=$(git rev-parse origin/main)
+        if [ "$LOCAL" != "$REMOTE" ]; then
+            echo "Pulling latest changes..."
+            git pull origin main
+            echo "Checking dependencies..."
+            pip install -r requirements.txt -q 2>/dev/null
+            pip install -e . -q 2>/dev/null
+            echo "Updated successfully."
+        else
+            echo "Already up to date."
+        fi
+    fi
+    echo ""
+else
+    echo "WARNING: git not available. Launching with current version."
+    echo ""
+fi
+
+echo "Starting Cantonese Anki Generator..."
+echo "============================================================"
+echo ""
+{quoted_executable} -m cantonese_anki_generator.web.run
+"""
+            
+            with open(launcher_path, 'w') as f:
+                f.write(launcher_content)
+            
+            os.chmod(launcher_path, 0o755)
+            
+            # Create .desktop file pointing to the launcher script
+            desktop_file_path = self.desktop_path / f"{name}.desktop"
+            quoted_launcher = shlex.quote(str(launcher_path))
             
             desktop_content = f"""[Desktop Entry]
 Version=1.0
 Type=Application
 Name={name}
-Comment=Web interface for manual audio alignment
-Exec={quoted_executable} -m cantonese_anki_generator.web.run
+Comment=Web interface for manual audio alignment (auto-updates from GitHub)
+Exec={quoted_launcher}
 Path={quoted_cwd}
 Terminal=true
 Categories=Education;Languages;
@@ -173,6 +232,8 @@ StartupNotify=true
             os.chmod(desktop_file_path, 0o755)
             
             print(f"✅ Linux shortcut created: {desktop_file_path}")
+            print(f"   Launcher script: {launcher_path}")
+            print("   Will auto-update from GitHub main branch on each launch.")
             return True
             
         except Exception as e:
