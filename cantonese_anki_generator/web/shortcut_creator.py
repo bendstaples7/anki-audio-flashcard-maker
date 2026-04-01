@@ -52,22 +52,31 @@ class WebShortcutCreator:
             return False
     
     def _create_windows_shortcut(self, name: str) -> bool:
-        """Create a Windows .lnk shortcut."""
+        """Create a Windows .lnk shortcut that auto-updates from GitHub."""
         try:
             import win32com.client
+            
+            project_dir = Path.cwd()
+            launch_bat = project_dir / "launch.bat"
+            
+            if not launch_bat.exists():
+                print(f"❌ launch.bat not found in {project_dir}")
+                print("   Run from the project root directory to create the shortcut.")
+                return False
             
             shell = win32com.client.Dispatch("WScript.Shell")
             shortcut_path = self.desktop_path / f"{name}.lnk"
             shortcut = shell.CreateShortCut(str(shortcut_path))
             
-            # Set shortcut properties
-            shortcut.Targetpath = sys.executable
-            shortcut.Arguments = f'-m cantonese_anki_generator.web.run'
-            shortcut.WorkingDirectory = str(Path.cwd())
-            shortcut.Description = "Cantonese Anki Generator - Web Interface with Manual Alignment"
+            # Point to launch.bat which auto-updates from GitHub before starting
+            shortcut.Targetpath = str(launch_bat)
+            shortcut.WorkingDirectory = str(project_dir)
+            shortcut.Description = "Cantonese Anki Generator - Auto-updates from GitHub"
             
             shortcut.save()
             print(f"✅ Windows shortcut created: {shortcut_path}")
+            print(f"   Points to: {launch_bat}")
+            print("   Will auto-update from GitHub main branch on each launch.")
             return True
             
         except ImportError:
@@ -77,19 +86,73 @@ class WebShortcutCreator:
             print(f"❌ Failed to create Windows shortcut: {e}")
             return False
     
+    def _get_update_script_content(self, quoted_cwd: str, quoted_executable: str) -> str:
+        """Return the bash auto-update launcher script body.
+
+        Used by both macOS and Linux shortcut creators so the update
+        logic is maintained in a single place.
+        """
+        return f"""#!/bin/bash
+cd {quoted_cwd}
+
+echo "============================================================"
+echo "  Cantonese Anki Generator - Auto-Update Launcher"
+echo "============================================================"
+echo ""
+
+if command -v git &> /dev/null && git rev-parse --git-dir &> /dev/null; then
+    echo "Checking for updates from GitHub..."
+    if ! git fetch origin main 2>/dev/null; then
+        echo "WARNING: Could not reach GitHub. Launching with current version."
+        echo ""
+    else
+        CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+        if [ "$CURRENT_BRANCH" != "main" ]; then
+            echo "Switching to main branch..."
+            if ! git checkout main 2>/dev/null; then
+                echo "WARNING: Could not switch to main. Launching with current version."
+            fi
+        fi
+        # Confirm we're on main before pulling
+        CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+        if [ "$CURRENT_BRANCH" = "main" ]; then
+            LOCAL=$(git rev-parse HEAD)
+            REMOTE=$(git rev-parse origin/main)
+            if [ "$LOCAL" != "$REMOTE" ]; then
+                echo "Pulling latest changes..."
+                git pull origin main
+                echo "Checking dependencies..."
+                {quoted_executable} -m pip install -r requirements.txt -q 2>/dev/null
+                {quoted_executable} -m pip install -e . -q 2>/dev/null
+                echo "Updated successfully."
+            else
+                echo "Already up to date."
+            fi
+        else
+            echo "WARNING: Not on main branch. Launching with current version."
+        fi
+    fi
+    echo ""
+else
+    echo "WARNING: git not available. Launching with current version."
+    echo ""
+fi
+
+echo "Starting Cantonese Anki Generator..."
+echo "============================================================"
+echo ""
+{quoted_executable} -m cantonese_anki_generator.web.run
+"""
+
     def _create_macos_shortcut(self, name: str) -> bool:
-        """Create a macOS application alias."""
+        """Create a macOS application alias that auto-updates from GitHub."""
         try:
             script_path = self.desktop_path / f"{name}.command"
             
-            # Use shlex.quote to properly escape paths with spaces
             quoted_cwd = shlex.quote(str(Path.cwd()))
             quoted_executable = shlex.quote(sys.executable)
             
-            script_content = f"""#!/bin/bash
-cd {quoted_cwd}
-{quoted_executable} -m cantonese_anki_generator.web.run
-"""
+            script_content = self._get_update_script_content(quoted_cwd, quoted_executable)
             
             with open(script_path, 'w') as f:
                 f.write(script_content)
@@ -104,20 +167,32 @@ cd {quoted_cwd}
             return False
     
     def _create_linux_shortcut(self, name: str) -> bool:
-        """Create a Linux .desktop file."""
+        """Create a Linux .desktop file with auto-update wrapper."""
         try:
-            desktop_file_path = self.desktop_path / f"{name}.desktop"
+            # Create a launcher script with auto-update logic
+            project_dir = Path.cwd()
+            launcher_path = project_dir / "launch.sh"
             
-            # Use shlex.quote to properly escape paths with spaces
             quoted_executable = shlex.quote(sys.executable)
-            quoted_cwd = shlex.quote(str(Path.cwd()))
+            quoted_cwd = shlex.quote(str(project_dir))
+            
+            launcher_content = self._get_update_script_content(quoted_cwd, quoted_executable)
+            
+            with open(launcher_path, 'w') as f:
+                f.write(launcher_content)
+            
+            os.chmod(launcher_path, 0o755)
+            
+            # Create .desktop file pointing to the launcher script
+            desktop_file_path = self.desktop_path / f"{name}.desktop"
+            quoted_launcher = shlex.quote(str(launcher_path))
             
             desktop_content = f"""[Desktop Entry]
 Version=1.0
 Type=Application
 Name={name}
-Comment=Web interface for manual audio alignment
-Exec={quoted_executable} -m cantonese_anki_generator.web.run
+Comment=Web interface for manual audio alignment (auto-updates from GitHub)
+Exec={quoted_launcher}
 Path={quoted_cwd}
 Terminal=true
 Categories=Education;Languages;
@@ -130,6 +205,8 @@ StartupNotify=true
             os.chmod(desktop_file_path, 0o755)
             
             print(f"✅ Linux shortcut created: {desktop_file_path}")
+            print(f"   Launcher script: {launcher_path}")
+            print("   Will auto-update from GitHub main branch on each launch.")
             return True
             
         except Exception as e:
