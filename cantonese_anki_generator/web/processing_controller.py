@@ -107,45 +107,50 @@ class ProcessingController:
         audio_duration = len(audio_data) / sample_rate
         logger.info(f"✓ Audio: {audio_duration:.1f} seconds")
         
-        # Stage 3: Segment audio
-        _report("Segmenting audio...")
-        logger.info("")
-        logger.info(f"✂️  Segmenting audio into {len(vocab_entries)} parts...")
-        segments = self._segment_audio(audio_data, len(vocab_entries))
-        logger.info(f"✓ Created {len(segments)} segments")
-        
-        # Stage 4: Pair terms with segments
-        _report("Pairing terms with audio...")
-        logger.info("")
-        logger.info("🔗 Pairing terms with audio...")
-        aligned_pairs = self._create_aligned_pairs(vocab_entries, segments)
-        
-        # Stage 5: Calculate confidence
-        logger.info("")
-        logger.info("📊 Calculating confidence scores...")
-        self._calculate_confidence_scores(aligned_pairs, audio_data, sample_rate)
-        
-        # Stage 6: VERIFY WITH WHISPER (before creating session)
-        _report("Verifying with speech recognition...")
+        # Stage 3: VAD-based segmentation — detect speech bursts with Silero VAD
+        _report("Detecting speech segments...")
         logger.info("")
         logger.info("="*60)
-        logger.info("🎤 VERIFYING WITH SPEECH RECOGNITION")
+        logger.info("🎙️  SILERO VAD SEGMENTATION")
         logger.info("="*60)
-        aligned_pairs = self._verify_and_adjust_alignments(
-            aligned_pairs, audio_data, sample_rate
+
+        from cantonese_anki_generator.audio.vad_segmentation import segment_audio_with_vad
+
+        time_ranges = segment_audio_with_vad(
+            audio_data, sample_rate, expected_count=len(vocab_entries)
         )
+
+        # Build aligned pairs from VAD-detected time ranges
+        aligned_pairs = []
+        for i, entry in enumerate(vocab_entries):
+            if i < len(time_ranges):
+                start, end = time_ranges[i]
+                s = max(0, int(start * sample_rate))
+                e = min(len(audio_data), int(end * sample_rate))
+                segment = AudioSegment(
+                    start_time=start,
+                    end_time=end,
+                    audio_data=audio_data[s:e],
+                    confidence=0.9,
+                    segment_id=f"vad_{i:03d}",
+                )
+            else:
+                logger.warning(f"⚠️  No VAD segment for '{entry.english}'")
+                segment = AudioSegment(
+                    start_time=0.0, end_time=0.0,
+                    audio_data=np.array([], dtype=audio_data.dtype),
+                    confidence=0.0, segment_id=f"vad_{i:03d}",
+                )
+            aligned_pairs.append(AlignedPair(
+                vocabulary_entry=entry,
+                audio_segment=segment,
+                alignment_confidence=segment.confidence,
+                audio_file_path="",
+            ))
+
+        logger.info(f"✓ Created {len(aligned_pairs)} aligned pairs")
         
-        # Stage 7: GLOBAL REASSIGNMENT with boundary refinement
-        _report("Optimizing alignment...")
-        logger.info("")
-        logger.info("="*60)
-        logger.info("🌐 GLOBAL TRANSCRIPTION-BASED REASSIGNMENT")
-        logger.info("="*60)
-        aligned_pairs = self._perform_global_reassignment(
-            aligned_pairs, audio_data, sample_rate
-        )
-        
-        # Stage 8: Create session with verified alignments
+        # Stage 4: Create session with VAD-derived alignments
         _report("Creating session...")
         logger.info("")
         logger.info("💾 Creating session with verified alignments...")
@@ -244,67 +249,9 @@ class ProcessingController:
             logger.error(f"Failed to load audio: {e}")
             raise
     
-    def _detect_leading_silence(self, audio_data: np.ndarray) -> float:
-        """
-        Detect leading silence and return the time (in seconds) where speech begins.
-
-        Uses the same algorithm as SmartBoundaryDetector: scan the first few
-        seconds with small RMS windows and require consecutive speech frames
-        before confirming.
-
-        Returns:
-            Offset in seconds to skip, or 0.0 if no significant leading silence.
-        """
-        try:
-            # Scan up to the first 10 seconds (or 80% of audio) looking for speech onset.
-            # This is more aggressive than SmartBoundaryDetector's 3s/30% because
-            # we specifically need to catch long leading silences (3-5s is common).
-            check_duration = min(10.0, len(audio_data) / self.sample_rate * 0.8)
-            check_samples = int(check_duration * self.sample_rate)
-
-            if check_samples <= 0 or check_samples >= len(audio_data):
-                return 0.0
-
-            overall_rms = float(np.sqrt(np.mean(audio_data ** 2)))
-            if overall_rms == 0:
-                return 0.0
-
-            window_size = int(0.05 * self.sample_rate)   # 50 ms
-            hop_size = int(0.02 * self.sample_rate)       # 20 ms
-            if window_size <= 0 or hop_size <= 0:
-                return 0.0
-
-            speech_threshold = max(0.015, overall_rms * 0.20)
-            consecutive = 0
-            required = 3  # 60 ms of sustained speech
-
-            for i in range(0, check_samples - window_size, hop_size):
-                window_rms = float(np.sqrt(np.mean(audio_data[i:i + window_size] ** 2)))
-                if window_rms > speech_threshold:
-                    consecutive += 1
-                    if consecutive >= required:
-                        start = (i - (consecutive - 1) * hop_size) / self.sample_rate
-                        if start >= 0.2:
-                            logger.info(
-                                f"🔍 Detected {start:.2f}s of leading silence "
-                                f"(threshold={speech_threshold:.4f}, rms={overall_rms:.4f})"
-                            )
-                            return start
-                        return 0.0
-                else:
-                    consecutive = 0
-
-            return 0.0
-        except Exception as e:
-            logger.warning(f"Leading silence detection failed: {e}")
-            return 0.0
-
     def _segment_audio(self, audio_data: np.ndarray, expected_count: int) -> List[AudioSegment]:
         """
         Segment audio into individual term segments.
-        
-        Detects and trims leading silence before segmentation so the first
-        segment starts where speech actually begins.
         
         Args:
             audio_data: Audio data array
@@ -317,19 +264,8 @@ class ProcessingController:
             Exception: If segmentation fails
         """
         try:
-            # Detect leading silence so the first segment isn't padded with dead air
-            speech_start = self._detect_leading_silence(audio_data)
-
-            if speech_start > 0:
-                trim_samples = int(speech_start * self.sample_rate)
-                trimmed_audio = audio_data[trim_samples:]
-                logger.info(f"✂️  Trimming {speech_start:.2f}s of leading silence before segmentation")
-            else:
-                trimmed_audio = audio_data
-                speech_start = 0.0
-
             segments = self.envelope_segmenter.segment_audio(
-                trimmed_audio, expected_count
+                audio_data, expected_count
             )
             
             if not segments:
@@ -340,17 +276,6 @@ class ProcessingController:
                     f"Segment count mismatch: expected {expected_count}, "
                     f"got {len(segments)}"
                 )
-
-            # Shift segment times back to absolute positions in the original audio
-            if speech_start > 0:
-                for seg in segments:
-                    seg.start_time += speech_start
-                    seg.end_time += speech_start
-                    # Re-extract audio_data from the original array so downstream
-                    # code (Whisper, clip extraction) works with correct samples
-                    s = max(0, int(seg.start_time * self.sample_rate))
-                    e = min(len(audio_data), int(seg.end_time * self.sample_rate))
-                    seg.audio_data = audio_data[s:e]
             
             return segments
             
