@@ -86,16 +86,13 @@ class WebShortcutCreator:
             print(f"❌ Failed to create Windows shortcut: {e}")
             return False
     
-    def _create_macos_shortcut(self, name: str) -> bool:
-        """Create a macOS application alias that auto-updates from GitHub."""
-        try:
-            script_path = self.desktop_path / f"{name}.command"
-            
-            # Use shlex.quote to properly escape paths with spaces
-            quoted_cwd = shlex.quote(str(Path.cwd()))
-            quoted_executable = shlex.quote(sys.executable)
-            
-            script_content = f"""#!/bin/bash
+    def _get_update_script_content(self, quoted_cwd: str, quoted_executable: str) -> str:
+        """Return the bash auto-update launcher script body.
+
+        Used by both macOS and Linux shortcut creators so the update
+        logic is maintained in a single place.
+        """
+        return f"""#!/bin/bash
 cd {quoted_cwd}
 
 echo "============================================================"
@@ -146,6 +143,16 @@ echo "============================================================"
 echo ""
 {quoted_executable} -m cantonese_anki_generator.web.run
 """
+
+    def _create_macos_shortcut(self, name: str) -> bool:
+        """Create a macOS application alias that auto-updates from GitHub."""
+        try:
+            script_path = self.desktop_path / f"{name}.command"
+            
+            quoted_cwd = shlex.quote(str(Path.cwd()))
+            quoted_executable = shlex.quote(sys.executable)
+            
+            script_content = self._get_update_script_content(quoted_cwd, quoted_executable)
             
             with open(script_path, 'w') as f:
                 f.write(script_content)
@@ -169,57 +176,7 @@ echo ""
             quoted_executable = shlex.quote(sys.executable)
             quoted_cwd = shlex.quote(str(project_dir))
             
-            launcher_content = f"""#!/bin/bash
-cd {quoted_cwd}
-
-echo "============================================================"
-echo "  Cantonese Anki Generator - Auto-Update Launcher"
-echo "============================================================"
-echo ""
-
-if command -v git &> /dev/null && git rev-parse --git-dir &> /dev/null; then
-    echo "Checking for updates from GitHub..."
-    if ! git fetch origin main 2>/dev/null; then
-        echo "WARNING: Could not reach GitHub. Launching with current version."
-        echo ""
-    else
-        CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
-        if [ "$CURRENT_BRANCH" != "main" ]; then
-            echo "Switching to main branch..."
-            if ! git checkout main 2>/dev/null; then
-                echo "WARNING: Could not switch to main. Launching with current version."
-            fi
-        fi
-        # Confirm we're on main before pulling
-        CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
-        if [ "$CURRENT_BRANCH" = "main" ]; then
-            LOCAL=$(git rev-parse HEAD)
-            REMOTE=$(git rev-parse origin/main)
-            if [ "$LOCAL" != "$REMOTE" ]; then
-                echo "Pulling latest changes..."
-                git pull origin main
-                echo "Checking dependencies..."
-                pip install -r requirements.txt -q 2>/dev/null
-                pip install -e . -q 2>/dev/null
-                echo "Updated successfully."
-            else
-                echo "Already up to date."
-            fi
-        else
-            echo "WARNING: Not on main branch. Launching with current version."
-        fi
-    fi
-    echo ""
-else
-    echo "WARNING: git not available. Launching with current version."
-    echo ""
-fi
-
-echo "Starting Cantonese Anki Generator..."
-echo "============================================================"
-echo ""
-{quoted_executable} -m cantonese_anki_generator.web.run
-"""
+            launcher_content = self._get_update_script_content(quoted_cwd, quoted_executable)
             
             with open(launcher_path, 'w') as f:
                 f.write(launcher_content)
