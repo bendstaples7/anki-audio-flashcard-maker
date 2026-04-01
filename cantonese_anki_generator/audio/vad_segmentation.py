@@ -79,7 +79,7 @@ def detect_speech_segments(
 
     logger.info(f"✓ Silero VAD found {len(segments)} speech segments")
     for i, (s, e) in enumerate(segments):
-        logger.info(f"   {i+1}: {s:.2f}s – {e:.2f}s (dur: {e-s:.2f}s)")
+        logger.info(f"   {i+1}: {s:.2f}s - {e:.2f}s (dur: {e-s:.2f}s)")
 
     return segments
 
@@ -99,8 +99,7 @@ def segment_audio_with_vad(
     segments = detect_speech_segments(audio_data, sample_rate)
 
     if not segments:
-        logger.error("No speech detected in audio")
-        return [(0.0, 0.0)] * expected_count
+        raise ValueError("No speech detected in audio - the recording may be silent or corrupted")
 
     logger.info(f"🔢 Reconciling {len(segments)} detected bursts with {expected_count} expected terms")
 
@@ -155,6 +154,6 @@ def segment_audio_with_vad(
 
     logger.info(f"✓ Final: {len(segments)} segments for {expected_count} terms")
     for i, (s, e) in enumerate(segments):
-        logger.info(f"   Term {i+1}: {s:.2f}s – {e:.2f}s (dur: {e-s:.2f}s)")
+        logger.info(f"   Term {i+1}: {s:.2f}s - {e:.2f}s (dur: {e-s:.2f}s)")
 
     return segments

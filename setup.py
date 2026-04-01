@@ -31,6 +31,8 @@ setup(
         "scipy>=1.7.0",
         "librosa>=0.9.0",
         "webrtcvad>=2.0.10",
+        "torch>=2.0.0",
+        "torchaudio>=2.0.0",
         "google-auth>=2.0.0",
         "google-auth-oauthlib>=0.5.0",
         "google-auth-httplib2>=0.1.0",
