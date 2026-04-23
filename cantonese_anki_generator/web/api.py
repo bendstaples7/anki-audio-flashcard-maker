@@ -756,6 +756,7 @@ def get_session(session_id: str):
                         'term_id': term.term_id,
                         'english': term.english,
                         'cantonese': term.cantonese,
+                        'jyutping': getattr(term, 'jyutping', ''),
                         'start_time': convert_numpy_types(term.start_time),
                         'end_time': convert_numpy_types(term.end_time),
                         'original_start': convert_numpy_types(term.original_start),
@@ -1838,6 +1839,7 @@ def generate_anki_package(session_id: str):
             vocab_entry = VocabularyEntry(
                 english=term.english,
                 cantonese=term.cantonese,
+                jyutping=getattr(term, 'jyutping', ''),
                 row_index=i
             )
             

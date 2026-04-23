@@ -743,6 +743,7 @@ class ProcessingController:
                 term_id=term_id,
                 english=pair.vocabulary_entry.english,
                 cantonese=pair.vocabulary_entry.cantonese,
+                jyutping=pair.vocabulary_entry.jyutping,
                 start_time=pair.audio_segment.start_time,
                 end_time=pair.audio_segment.end_time,
                 original_start=pair.audio_segment.start_time,

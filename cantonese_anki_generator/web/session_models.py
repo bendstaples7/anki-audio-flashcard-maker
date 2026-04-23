@@ -36,6 +36,7 @@ class TermAlignment:
     is_manually_adjusted: bool
     confidence_score: float  # 0.0 to 1.0
     audio_segment_url: str  # URL to audio file for this term
+    jyutping: str = ""  # Jyutping romanization
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""

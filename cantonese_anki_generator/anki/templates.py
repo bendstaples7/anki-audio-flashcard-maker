@@ -22,8 +22,8 @@ class CantoneseCardTemplate:
     - Back: Cantonese term with audio playback
     """
     
-    # Unique model ID for this card type (generated randomly but fixed)
-    MODEL_ID = 1607392319
+    # Unique model ID for this card type (new ID for Jyutping-enabled model)
+    MODEL_ID = 1607392320
     
     # CSS styling for the cards
     CSS = """
@@ -48,6 +48,13 @@ class CantoneseCardTemplate:
     font-weight: bold;
     color: black;
     margin: 20px 0;
+}
+
+.jyutping {
+    font-size: 18px;
+    color: #6c757d;
+    font-style: italic;
+    margin: 8px 0 16px 0;
 }
 
 .audio-section {
@@ -94,7 +101,7 @@ class CantoneseCardTemplate:
 </div>
 """
     
-    # Back template (Cantonese with audio)
+    # Back template (Cantonese with Jyutping and audio)
     BACK_TEMPLATE = """
 <div class="card">
     <div class="front">
@@ -106,6 +113,12 @@ class CantoneseCardTemplate:
     <div class="back">
         {{Cantonese}}
     </div>
+    
+    {{#Jyutping}}
+    <div class="jyutping">
+        {{Jyutping}}
+    </div>
+    {{/Jyutping}}
     
     <div class="audio-section">
         <div class="audio-label">🔊 Pronunciation:</div>
@@ -130,6 +143,7 @@ class CantoneseCardTemplate:
             fields=[
                 {'name': 'English'},
                 {'name': 'Cantonese'},
+                {'name': 'Jyutping'},
                 {'name': 'Audio'},
                 {'name': 'Tags'},
             ],
@@ -154,7 +168,7 @@ class CardFormatter:
     
     @staticmethod
     def format_card_fields(english: str, cantonese: str, audio_filename: str, 
-                          tags: list = None) -> Dict[str, Any]:
+                          jyutping: str = "", tags: list = None) -> Dict[str, Any]:
         """
         Format vocabulary data into Anki card fields.
         
@@ -162,6 +176,7 @@ class CardFormatter:
             english: English term
             cantonese: Cantonese term
             audio_filename: Name of the audio file (just filename, not full path)
+            jyutping: Jyutping romanization
             tags: List of tags for the card
             
         Returns:
@@ -179,6 +194,7 @@ class CardFormatter:
         fields = {
             'English': english.strip(),
             'Cantonese': cantonese.strip(),
+            'Jyutping': jyutping.strip() if jyutping else '',
             'Audio': audio_field,
             'Tags': tag_string,
         }

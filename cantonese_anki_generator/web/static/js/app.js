@@ -2394,11 +2394,20 @@ function createTermRow(termAlignment) {
     // Term info column
     const termInfo = document.createElement('div');
     termInfo.className = 'term-info';
-    termInfo.innerHTML = `
+    
+    let termHtml = `
         <div class="term-english">${escapeHtml(termAlignment.english)}</div>
-        <div class="term-cantonese">${escapeHtml(termAlignment.cantonese)}</div>
-        <div class="term-id">#${termAlignment.term_id}</div>
-    `;
+        <div class="term-cantonese">${escapeHtml(termAlignment.cantonese)}</div>`;
+    
+    if (termAlignment.jyutping) {
+        termHtml += `
+        <div class="term-jyutping">${escapeHtml(termAlignment.jyutping)}</div>`;
+    }
+    
+    termHtml += `
+        <div class="term-id">#${termAlignment.term_id}</div>`;
+    
+    termInfo.innerHTML = termHtml;
     
     // Waveform column
     const waveformCell = document.createElement('div');

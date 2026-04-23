@@ -592,6 +592,12 @@ section h2 {
     font-size: 0.95em;
 }
 
+.term-jyutping {
+    color: #95a5a6;
+    font-size: 0.85em;
+    font-style: italic;
+}
+
 .term-id {
     font-size: 0.8em;
     color: #bdc3c7;
