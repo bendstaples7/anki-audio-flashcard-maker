@@ -196,9 +196,9 @@ def _extract_cjk_segment(text: str) -> str:
 
 def _extract_english_segment(text: str) -> str:
     """Extract English words (and adjacent digits like 'Lesson 1') from text."""
-    # Match sequences of ASCII words, allowing digits
+    # Match sequences starting with a letter, allowing digits within tokens
     english_words = re.findall(
-        r"[A-Za-z0-9][A-Za-z0-9'\-]*(?:\s+[A-Za-z0-9][A-Za-z0-9'\-]*)*", text
+        r"[A-Za-z][A-Za-z0-9'\-]*(?:\s+[A-Za-z0-9][A-Za-z0-9'\-]*)*", text
     )
     result_words = []
     for phrase in english_words:

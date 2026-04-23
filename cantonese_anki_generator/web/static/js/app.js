@@ -1885,8 +1885,7 @@ function handleCellEdit(event) {
             // Remove warning message when user provides content
             const parentCell = target.closest('td');
             if (parentCell) {
-                const warning = parentCell.querySelector('.warning-message');
-                if (warning) warning.remove();
+                parentCell.querySelectorAll('.warning-message, .error-message').forEach(el => el.remove());
             }
         } else {
             target.classList.add('empty');

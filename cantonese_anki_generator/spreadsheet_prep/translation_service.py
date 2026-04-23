@@ -22,8 +22,9 @@ class GoogleTranslationService(TranslationService):
     
     Initialization order:
     1. Try google-cloud-translate with service account credentials
-    2. Fall back to googleapiclient with existing OAuth credentials (token.json)
-    3. Report failure if neither is available
+    2. Fall back to deep-translator (free, no API key needed)
+    3. Fall back to googleapiclient with existing OAuth credentials (token.json)
+    4. Report failure if none are available
     """
     
     def __init__(self):
@@ -175,7 +176,7 @@ class GoogleTranslationService(TranslationService):
                     error="No translation backend configured"
                 )
         except Exception as e:
-            self.logger.error(f"Translation failed for '{english_term}': {e}")
+            self.logger.error(f"Translation failed: {e}")
             return TranslationResult(
                 english=english_term,
                 cantonese="",
@@ -223,8 +224,8 @@ class GoogleTranslationService(TranslationService):
                             confidence=confidence
                         )
             except Exception as e:
-                if target_lang == 'yue':
-                    self.logger.info(f"Cantonese (yue) not available, falling back to zh-TW: {e}")
+                if target_lang == 'yue' and 'invalid' in str(e).lower() or 'not support' in str(e).lower():
+                    self.logger.info(f"Cantonese (yue) not available via OAuth, falling back to zh-TW: {e}")
                     continue
                 raise
         

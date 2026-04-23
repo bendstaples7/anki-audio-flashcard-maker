@@ -2129,6 +2129,7 @@ def parse_input_text():
         from cantonese_anki_generator.spreadsheet_prep.input_parser import parse_input_full
 
         entries = parse_input_full(text)
+        entries = entries[:Config.TRANSLATION_BATCH_SIZE]
 
         return jsonify({
             'success': True,
@@ -2143,9 +2144,9 @@ def parse_input_text():
         }), 200
 
     except Exception as e:
-        logger.error(f"Parse failed with unexpected error: {e}", exc_info=True)
+        logger.error(f"Parse failed: {e!s}", exc_info=True)
         response = format_error_response(
-            error_message=f'Parse failed: {str(e)}',
+            error_message=f'Parse failed: {e!s}',
             error_code=ErrorCode.PROCESSING_ERROR,
             action_required=ActionRequired.RETRY
         )
@@ -2157,14 +2158,19 @@ def translate_terms():
     """
     Translate English terms to Cantonese and generate Jyutping.
     
-    Accepts two request formats:
+    Accepts three request formats:
     
-    1. Simple terms list (English-only, needs translation):
+    1. Raw text (multi-line input, parsed server-side):
+        {
+            "raw_text": "hello\\ngoodbye\\nhello\\t你好\\tnei5 hou2"
+        }
+    
+    2. Simple terms list (English-only, needs translation):
         {
             "terms": ["hello", "goodbye", ...]
         }
     
-    2. Pre-parsed entries (mixed input already separated into columns):
+    3. Pre-parsed entries (mixed input already separated into columns):
         {
             "entries": [
                 {"english": "hello", "cantonese": "你好", "jyutping": "nei5 hou2"},
@@ -2316,14 +2322,24 @@ def translate_terms():
                 )
                 return jsonify(response), 413
             
+            # Validate all terms are strings
+            for i, term in enumerate(terms):
+                if not isinstance(term, str):
+                    response = format_error_response(
+                        error_message=f'Invalid term at index {i}: expected string, got {type(term).__name__}.',
+                        error_code=ErrorCode.INVALID_INPUT,
+                        action_required=ActionRequired.RETRY
+                    )
+                    return jsonify(response), 400
+            
             # Convert to entries format for unified processing
-            entries_data = [{'english': str(term) if term is not None else '', 'cantonese': '', 'jyutping': ''} for term in terms]
+            entries_data = [{'english': term, 'cantonese': '', 'jyutping': ''} for term in terms]
             return _process_parsed_entries(entries_data)
         
         else:
-            logger.warning("Neither 'terms' nor 'entries' provided in request")
+            logger.warning("No recognized payload field in translate request")
             response = format_error_response(
-                error_message='Request must include either "terms" (list of strings) or "entries" (list of objects with english/cantonese/jyutping fields).',
+                error_message='Request must include "raw_text" (string), "terms" (list of strings), or "entries" (list of objects with english/cantonese/jyutping fields).',
                 error_code=ErrorCode.MISSING_DATA,
                 action_required=ActionRequired.RETRY
             )
@@ -2363,9 +2379,18 @@ def _process_parsed_entries(entries_data):
     failed_count = 0
     
     for entry_data in entries_data:
-        english = str(entry_data.get('english', '') or '') .strip() if isinstance(entry_data, dict) else str(entry_data).strip()
-        cantonese = str(entry_data.get('cantonese', '') or '').strip() if isinstance(entry_data, dict) else ''
-        jyutping = str(entry_data.get('jyutping', '') or '').strip() if isinstance(entry_data, dict) else ''
+        if not isinstance(entry_data, dict):
+            results.append({
+                'english': str(entry_data) if entry_data is not None else '',
+                'cantonese': '', 'jyutping': '',
+                'success': False, 'error': 'Invalid entry format'
+            })
+            failed_count += 1
+            continue
+        
+        english = str(entry_data.get('english', '') or '').strip()
+        cantonese = str(entry_data.get('cantonese', '') or '').strip()
+        jyutping = str(entry_data.get('jyutping', '') or '').strip()
         
         errors = []
         
