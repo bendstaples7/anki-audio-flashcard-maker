@@ -208,11 +208,10 @@ def _extract_english_segment(text: str) -> str:
             clean = t.strip('.,;:!?()[]{}')
             if not clean:
                 continue
-            # Keep tokens that contain digits (e.g., "1", "3rd") — they're English
-            if any(c.isdigit() for c in clean):
-                non_roman_tokens.append(t)
-            elif not _is_jyutping_token(clean) and not _is_pinyin_token(clean):
-                non_roman_tokens.append(t)
+            # Skip tokens that match romanization patterns
+            if _is_jyutping_token(clean) or _is_pinyin_token(clean):
+                continue
+            non_roman_tokens.append(t)
         if non_roman_tokens:
             result_words.append(' '.join(non_roman_tokens))
     return ' '.join(result_words).strip()
@@ -331,8 +330,9 @@ def parse_line(line: str) -> ParsedEntry:
             jyutping=jyutping
         )
 
-    # Check if the entire line is romanization
-    if _is_romanization_sequence(line) or _is_romanization_token(line):
+    # Check if the entire line is romanization (require 2+ tokens for whole lines
+    # to avoid misclassifying ambiguous single tokens like "unit3")
+    if _is_romanization_sequence(line):
         return ParsedEntry(english="", jyutping=line.strip())
 
     # Default: treat as English term

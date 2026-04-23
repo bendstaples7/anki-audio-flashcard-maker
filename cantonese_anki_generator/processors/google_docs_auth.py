@@ -100,8 +100,8 @@ class GoogleDocsAuthenticator:
             # Load existing token if available (with file locking)
             self._credentials = self._load_token()
             
-            # Check if cached token is missing required scopes
-            if self._credentials and self._credentials.valid:
+            # Check if cached token is missing required scopes (before any refresh)
+            if self._credentials:
                 from cantonese_anki_generator.config import Config
                 cached_scopes = set(self._credentials.scopes or [])
                 required_scopes = set(Config.GOOGLE_DOCS_SCOPES)

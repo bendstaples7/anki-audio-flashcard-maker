@@ -200,25 +200,33 @@ class GoogleTranslationService(TranslationService):
     def _translate_oauth(self, english_term: str) -> TranslationResult:
         """Translate using googleapiclient with OAuth credentials.
         
-        Note: Uses zh-TW (Traditional Chinese) as target since the free
-        Translation API tier may not support Cantonese (yue) directly.
+        Tries Cantonese (yue) first, falls back to Traditional Chinese (zh-TW)
+        if the Cloud Translation API doesn't have yue enabled for this project.
         """
-        result = self._translate_service.translations().list(
-            q=english_term,
-            target='zh-TW',
-            source='en'
-        ).execute()
-        
-        translations = result.get('translations', [])
-        if translations:
-            translated = translations[0].get('translatedText', '')
-            if translated:
-                return TranslationResult(
-                    english=english_term,
-                    cantonese=translated,
-                    success=True,
-                    confidence=0.75  # Lower confidence: zh-TW, not native Cantonese
-                )
+        # Try Cantonese first
+        for target_lang, confidence in [('yue', 0.9), ('zh-TW', 0.75)]:
+            try:
+                result = self._translate_service.translations().list(
+                    q=english_term,
+                    target=target_lang,
+                    source='en'
+                ).execute()
+                
+                translations = result.get('translations', [])
+                if translations:
+                    translated = translations[0].get('translatedText', '')
+                    if translated:
+                        return TranslationResult(
+                            english=english_term,
+                            cantonese=translated,
+                            success=True,
+                            confidence=confidence
+                        )
+            except Exception as e:
+                if target_lang == 'yue':
+                    self.logger.info(f"Cantonese (yue) not available, falling back to zh-TW: {e}")
+                    continue
+                raise
         
         return TranslationResult(
             english=english_term,
