@@ -31,19 +31,24 @@ class GoogleTranslationService(TranslationService):
         self.logger = logging.getLogger(__name__)
         self.use_real_api = False
         self.translator = None
-        self._backend = None  # 'cloud' or 'oauth'
+        self._backend = None  # 'cloud', 'oauth', or 'deep'
         
         # Try google-cloud-translate first (service account)
         if self._init_cloud_translate():
             return
         
+        # Fall back to deep-translator (free, no API key needed)
+        if self._init_deep_translate():
+            return
+        
         # Fall back to googleapiclient with OAuth credentials
+        # (requires Cloud Translation API enabled in Google Cloud project)
         if self._init_oauth_translate():
             return
         
         self.logger.warning(
             "No translation backend available. "
-            "Install google-cloud-translate or ensure OAuth token.json exists."
+            "Install deep-translator (pip install deep-translator) for free translation."
         )
     
     def _init_cloud_translate(self) -> bool:
@@ -109,6 +114,22 @@ class GoogleTranslationService(TranslationService):
             self.logger.warning(f"Failed to initialize OAuth translation: {e}")
             return False
     
+    def _init_deep_translate(self) -> bool:
+        """Try to initialize deep-translator (free, no API key needed)."""
+        try:
+            from deep_translator import GoogleTranslator
+            # Test that it works with a quick probe
+            self._deep_translator = GoogleTranslator(source='en', target='zh-TW')
+            self.use_real_api = True
+            self._backend = 'deep'
+            self.logger.info("Translation service initialized with deep-translator (free, zh-TW)")
+            return True
+        except ImportError:
+            return False
+        except Exception as e:
+            self.logger.warning(f"Failed to initialize deep-translator: {e}")
+            return False
+    
     def translate(self, english_term: str) -> TranslationResult:
         """
         Translate English term to Cantonese.
@@ -144,6 +165,8 @@ class GoogleTranslationService(TranslationService):
                 return self._translate_cloud(english_term)
             elif self._backend == 'oauth':
                 return self._translate_oauth(english_term)
+            elif self._backend == 'deep':
+                return self._translate_deep(english_term)
             else:
                 return TranslationResult(
                     english=english_term,
@@ -193,6 +216,23 @@ class GoogleTranslationService(TranslationService):
                     confidence=0.85
                 )
         
+        return TranslationResult(
+            english=english_term,
+            cantonese="",
+            success=False,
+            error="Translation returned empty result"
+        )
+    
+    def _translate_deep(self, english_term: str) -> TranslationResult:
+        """Translate using deep-translator (free, no API key)."""
+        translated = self._deep_translator.translate(english_term)
+        if translated:
+            return TranslationResult(
+                english=english_term,
+                cantonese=translated,
+                success=True,
+                confidence=0.8
+            )
         return TranslationResult(
             english=english_term,
             cantonese="",
