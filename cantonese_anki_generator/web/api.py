@@ -2317,7 +2317,7 @@ def translate_terms():
                 return jsonify(response), 413
             
             # Convert to entries format for unified processing
-            entries_data = [{'english': term, 'cantonese': '', 'jyutping': ''} for term in terms]
+            entries_data = [{'english': str(term) if term is not None else '', 'cantonese': '', 'jyutping': ''} for term in terms]
             return _process_parsed_entries(entries_data)
         
         else:
@@ -2363,9 +2363,9 @@ def _process_parsed_entries(entries_data):
     failed_count = 0
     
     for entry_data in entries_data:
-        english = entry_data.get('english', '').strip() if isinstance(entry_data, dict) else str(entry_data).strip()
-        cantonese = entry_data.get('cantonese', '').strip() if isinstance(entry_data, dict) else ''
-        jyutping = entry_data.get('jyutping', '').strip() if isinstance(entry_data, dict) else ''
+        english = str(entry_data.get('english', '') or '') .strip() if isinstance(entry_data, dict) else str(entry_data).strip()
+        cantonese = str(entry_data.get('cantonese', '') or '').strip() if isinstance(entry_data, dict) else ''
+        jyutping = str(entry_data.get('jyutping', '') or '').strip() if isinstance(entry_data, dict) else ''
         
         errors = []
         

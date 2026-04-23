@@ -195,15 +195,23 @@ def _extract_cjk_segment(text: str) -> str:
 
 
 def _extract_english_segment(text: str) -> str:
-    """Extract English words from text (ASCII letters, common punctuation)."""
-    english_words = re.findall(r"[A-Za-z][A-Za-z'\-]*(?:\s+[A-Za-z][A-Za-z'\-]*)*", text)
+    """Extract English words (and adjacent digits like 'Lesson 1') from text."""
+    # Match sequences of ASCII words, allowing digits
+    english_words = re.findall(
+        r"[A-Za-z0-9][A-Za-z0-9'\-]*(?:\s+[A-Za-z0-9][A-Za-z0-9'\-]*)*", text
+    )
     result_words = []
     for phrase in english_words:
         tokens = phrase.split()
         non_roman_tokens = []
         for t in tokens:
             clean = t.strip('.,;:!?()[]{}')
-            if clean and not _is_jyutping_token(clean) and not _is_pinyin_token(clean):
+            if not clean:
+                continue
+            # Keep tokens that contain digits (e.g., "1", "3rd") — they're English
+            if any(c.isdigit() for c in clean):
+                non_roman_tokens.append(t)
+            elif not _is_jyutping_token(clean) and not _is_pinyin_token(clean):
                 non_roman_tokens.append(t)
         if non_roman_tokens:
             result_words.append(' '.join(non_roman_tokens))
@@ -241,6 +249,12 @@ def _split_by_delimiter(line: str) -> List[str]:
     return []
 
 
+def _is_romanization_token(text: str) -> bool:
+    """Check if a single token is a Jyutping or Pinyin romanization."""
+    clean = text.strip().strip('.,;:!?()[]{}')
+    return bool(clean) and (_is_jyutping_token(clean) or _is_pinyin_token(clean))
+
+
 def _classify_segment(text: str) -> str:
     """
     Classify a text segment as 'english', 'chinese', or 'romanization'.
@@ -253,6 +267,10 @@ def _classify_segment(text: str) -> str:
         return 'chinese'
 
     if _is_romanization_sequence(text):
+        return 'romanization'
+
+    # Check single-token romanization (e.g., "m4", "go2" in a delimited field)
+    if _is_romanization_token(text):
         return 'romanization'
 
     # Default to english for ASCII text
@@ -314,7 +332,7 @@ def parse_line(line: str) -> ParsedEntry:
         )
 
     # Check if the entire line is romanization
-    if _is_romanization_sequence(line):
+    if _is_romanization_sequence(line) or _is_romanization_token(line):
         return ParsedEntry(english="", jyutping=line.strip())
 
     # Default: treat as English term

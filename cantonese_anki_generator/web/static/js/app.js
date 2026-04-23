@@ -1882,6 +1882,12 @@ function handleCellEdit(event) {
         // Remove empty class if content was added
         if (value) {
             target.classList.remove('empty');
+            // Remove warning message when user provides content
+            const parentCell = target.closest('td');
+            if (parentCell) {
+                const warning = parentCell.querySelector('.warning-message');
+                if (warning) warning.remove();
+            }
         } else {
             target.classList.add('empty');
         }

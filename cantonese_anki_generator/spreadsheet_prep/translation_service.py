@@ -198,7 +198,11 @@ class GoogleTranslationService(TranslationService):
         )
     
     def _translate_oauth(self, english_term: str) -> TranslationResult:
-        """Translate using googleapiclient with OAuth credentials."""
+        """Translate using googleapiclient with OAuth credentials.
+        
+        Note: Uses zh-TW (Traditional Chinese) as target since the free
+        Translation API tier may not support Cantonese (yue) directly.
+        """
         result = self._translate_service.translations().list(
             q=english_term,
             target='zh-TW',
@@ -213,7 +217,7 @@ class GoogleTranslationService(TranslationService):
                     english=english_term,
                     cantonese=translated,
                     success=True,
-                    confidence=0.85
+                    confidence=0.75  # Lower confidence: zh-TW, not native Cantonese
                 )
         
         return TranslationResult(
@@ -224,14 +228,19 @@ class GoogleTranslationService(TranslationService):
         )
     
     def _translate_deep(self, english_term: str) -> TranslationResult:
-        """Translate using deep-translator (free, no API key)."""
+        """Translate using deep-translator (free, no API key).
+        
+        Note: Uses zh-TW (Traditional Chinese) as target since free Google
+        Translate does not support Cantonese (yue) directly. Traditional
+        Chinese characters are the same writing system used in Cantonese.
+        """
         translated = self._deep_translator.translate(english_term)
         if translated:
             return TranslationResult(
                 english=english_term,
                 cantonese=translated,
                 success=True,
-                confidence=0.8
+                confidence=0.7  # Lower confidence: zh-TW, not native Cantonese
             )
         return TranslationResult(
             english=english_term,
