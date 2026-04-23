@@ -1980,6 +1980,12 @@ function createReviewTableRow(entry, index) {
         errorMsg.textContent = entry.error;
         cantoneseCell.appendChild(cantoneseDiv);
         cantoneseCell.appendChild(errorMsg);
+    } else if (entry.warnings && !entry.cantonese) {
+        const warnMsg = document.createElement('div');
+        warnMsg.className = 'warning-message';
+        warnMsg.textContent = 'Translation unavailable — enter manually';
+        cantoneseCell.appendChild(cantoneseDiv);
+        cantoneseCell.appendChild(warnMsg);
     } else {
         cantoneseCell.appendChild(cantoneseDiv);
     }
@@ -2000,6 +2006,14 @@ function createReviewTableRow(entry, index) {
     }
     
     jyutpingCell.appendChild(jyutpingDiv);
+    
+    // Show warning if romanization failed
+    if (entry.warnings && !entry.jyutping) {
+        const warnMsg = document.createElement('div');
+        warnMsg.className = 'warning-message';
+        warnMsg.textContent = 'Romanization unavailable — enter manually';
+        jyutpingCell.appendChild(warnMsg);
+    }
     
     // Status column
     const statusCell = document.createElement('td');
