@@ -2129,7 +2129,14 @@ def parse_input_text():
         from cantonese_anki_generator.spreadsheet_prep.input_parser import parse_input_full
 
         entries = parse_input_full(text)
-        entries = entries[:Config.TRANSLATION_BATCH_SIZE]
+
+        if len(entries) > Config.TRANSLATION_BATCH_SIZE:
+            response = format_error_response(
+                error_message=f'Too many entries ({len(entries)}). Maximum allowed is {Config.TRANSLATION_BATCH_SIZE} per request.',
+                error_code=ErrorCode.INVALID_INPUT,
+                action_required=ActionRequired.RETRY
+            )
+            return jsonify(response), 413
 
         return jsonify({
             'success': True,

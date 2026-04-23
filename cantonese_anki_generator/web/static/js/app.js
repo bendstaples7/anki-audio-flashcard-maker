@@ -1773,7 +1773,8 @@ function createReviewTableRow(entry, index) {
         errorMsg.textContent = entry.error;
         cantoneseCell.appendChild(cantoneseDiv);
         cantoneseCell.appendChild(errorMsg);
-    } else if (entry.warnings && !entry.cantonese) {
+    } else if (entry.warnings && Array.isArray(entry.warnings) && !entry.cantonese
+              && entry.warnings.some(w => /translat/i.test(w))) {
         const warnMsg = document.createElement('div');
         warnMsg.className = 'warning-message';
         warnMsg.textContent = 'Translation unavailable — enter manually';
@@ -1801,7 +1802,8 @@ function createReviewTableRow(entry, index) {
     jyutpingCell.appendChild(jyutpingDiv);
     
     // Show warning if romanization failed
-    if (entry.warnings && !entry.jyutping) {
+    if (entry.warnings && Array.isArray(entry.warnings) && !entry.jyutping
+        && entry.warnings.some(w => /romaniz/i.test(w))) {
         const warnMsg = document.createElement('div');
         warnMsg.className = 'warning-message';
         warnMsg.textContent = 'Romanization unavailable — enter manually';

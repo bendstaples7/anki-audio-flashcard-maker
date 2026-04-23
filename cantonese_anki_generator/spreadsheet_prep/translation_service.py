@@ -224,7 +224,8 @@ class GoogleTranslationService(TranslationService):
                             confidence=confidence
                         )
             except Exception as e:
-                if target_lang == 'yue' and 'invalid' in str(e).lower() or 'not support' in str(e).lower():
+                err_msg = str(e).lower()
+                if target_lang == 'yue' and ('invalid' in err_msg or 'not support' in err_msg):
                     self.logger.info(f"Cantonese (yue) not available via OAuth, falling back to zh-TW: {e}")
                     continue
                 raise

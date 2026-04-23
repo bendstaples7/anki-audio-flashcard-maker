@@ -117,7 +117,7 @@ class GoogleDocsAuthenticator:
                 except (json.JSONDecodeError, IOError, KeyError):
                     cached_scopes = set()
                 
-                if cached_scopes and not required_scopes.issubset(cached_scopes):
+                if not required_scopes.issubset(cached_scopes):
                     missing = required_scopes - cached_scopes
                     print(f"Token missing required scopes: {missing}. Re-authentication needed.")
                     if os.path.exists(self.token_path):

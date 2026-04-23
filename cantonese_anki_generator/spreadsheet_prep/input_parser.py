@@ -31,32 +31,35 @@ class ParsedEntry:
     jyutping: str = ""
 
 
-def _is_cjk_char(char: str) -> bool:
-    """Check if a character is a CJK (Chinese/Japanese/Korean) character."""
+def _is_cjk_ideograph(char: str) -> bool:
+    """Check if a character is a CJK ideograph (actual Chinese character, not punctuation)."""
     if len(char) != 1:
         return False
     cp = ord(char)
-    # CJK Unified Ideographs
     if 0x4E00 <= cp <= 0x9FFF:
         return True
-    # CJK Unified Ideographs Extension A
     if 0x3400 <= cp <= 0x4DBF:
         return True
-    # CJK Unified Ideographs Extension B
     if 0x20000 <= cp <= 0x2A6DF:
         return True
-    # CJK Compatibility Ideographs
     if 0xF900 <= cp <= 0xFAFF:
         return True
-    # CJK Unified Ideographs Extension C-F
     if 0x2A700 <= cp <= 0x2CEAF:
         return True
-    # CJK Radicals Supplement
     if 0x2E80 <= cp <= 0x2EFF:
         return True
-    # Kangxi Radicals
     if 0x2F00 <= cp <= 0x2FDF:
         return True
+    return False
+
+
+def _is_cjk_char(char: str) -> bool:
+    """Check if a character is CJK (ideograph, symbol, punctuation, or fullwidth)."""
+    if _is_cjk_ideograph(char):
+        return True
+    if len(char) != 1:
+        return False
+    cp = ord(char)
     # CJK Symbols and Punctuation
     if 0x3000 <= cp <= 0x303F:
         return True
@@ -67,8 +70,8 @@ def _is_cjk_char(char: str) -> bool:
 
 
 def _contains_cjk(text: str) -> bool:
-    """Check if text contains any CJK characters."""
-    return any(_is_cjk_char(c) for c in text)
+    """Check if text contains any CJK ideographs (not just punctuation)."""
+    return any(_is_cjk_ideograph(c) for c in text)
 
 
 def _is_jyutping_token(token: str) -> bool:
@@ -169,36 +172,38 @@ def _is_romanization_sequence(text: str) -> bool:
 
 def _extract_cjk_segment(text: str) -> str:
     """
-    Extract CJK characters and any characters embedded between them
-    (digits, CJK punctuation) from text.
+    Extract CJK ideographs and adjacent characters (digits, CJK punctuation).
 
-    Preserves digits that appear between CJK characters (e.g., "第1課" -> "第1課").
+    Only includes CJK punctuation and digits when they are adjacent to actual
+    CJK ideographs. Standalone punctuation like '。' without neighboring
+    ideographs is excluded.
     """
     cjk_punctuation = set('，。、！？：；「」『』（）')
     result = []
     for char in text:
-        if _is_cjk_char(char) or char in cjk_punctuation:
+        if _is_cjk_ideograph(char):
             result.append(char)
-        elif result and (char.isdigit() or char == ' '):
-            # Keep digits and spaces that appear after CJK content
-            # (they may be embedded, e.g., "第1課" or "你 好")
-            result.append(char)
+        elif char in cjk_punctuation or (char.isdigit() and result) or (char == ' ' and result):
+            # Only include punctuation/digits/spaces if we already have CJK content
+            if result:
+                result.append(char)
         elif result and not char.isascii():
-            # Keep other non-ASCII chars that might be related
             result.append(char)
 
-    # Trim trailing non-CJK characters (spaces/digits at the end)
+    # Trim trailing non-ideograph characters
     text_out = ''.join(result)
-    # Strip trailing spaces and digits that aren't followed by CJK
-    text_out = re.sub(r'[\s\d]+$', '', text_out)
-    return text_out.strip()
+    text_out = re.sub(r'[\s\d\W]+$', '', text_out)
+    # Final check: only return if there are actual ideographs
+    if any(_is_cjk_ideograph(c) for c in text_out):
+        return text_out.strip()
+    return ''
 
 
 def _extract_english_segment(text: str) -> str:
     """Extract English words (and adjacent digits like 'Lesson 1') from text."""
-    # Match sequences starting with a letter, allowing digits within tokens
+    # Match sequences that contain at least one ASCII letter, allowing digits
     english_words = re.findall(
-        r"[A-Za-z][A-Za-z0-9'\-]*(?:\s+[A-Za-z0-9][A-Za-z0-9'\-]*)*", text
+        r"(?=[^\s]*[A-Za-z])[A-Za-z0-9][A-Za-z0-9'\-]*(?:\s+[A-Za-z0-9][A-Za-z0-9'\-]*)*", text
     )
     result_words = []
     for phrase in english_words:
