@@ -2386,14 +2386,10 @@ def _process_parsed_entries(entries_data):
                 # Romanization failure is non-fatal — entry is still usable
                 errors.append(rom_result.error or 'Romanization failed')
         
-        # Determine success: an entry is usable if it has at least one
-        # meaningful field populated. The ideal is all three, but partial
-        # entries (e.g., English-only needing translation, or Chinese-only
-        # needing romanization) are still valid for the review table.
-        
-        # Entry is successful if we have at least english or cantonese
-        # (the user can fill in the rest in the review table)
-        entry_success = bool(english) or bool(cantonese)
+        # Determine success: entry needs both english AND cantonese to be
+        # considered fully successful. If translation failed, the entry is
+        # still shown in the review table but marked as needing attention.
+        entry_success = bool(english) and bool(cantonese)
         
         result = {
             'english': english,
@@ -2403,11 +2399,18 @@ def _process_parsed_entries(entries_data):
         }
         
         if not entry_success:
-            result['error'] = '; '.join(errors) if errors else 'Missing required fields'
+            if errors:
+                result['error'] = '; '.join(errors)
+            elif not english and not cantonese:
+                result['error'] = 'Missing required fields'
+            elif not cantonese:
+                result['error'] = 'Translation failed — enter Cantonese manually'
+            else:
+                result['error'] = 'Missing English term'
             failed_count += 1
         else:
             if errors:
-                # Partial success (e.g., translation API unavailable but entry still editable)
+                # Partial success (e.g., romanization failed but translation worked)
                 result['warnings'] = errors
             successful_count += 1
         

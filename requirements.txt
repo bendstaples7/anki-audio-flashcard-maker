@@ -25,6 +25,9 @@ google-cloud-translate>=3.0.0
 # Cantonese Jyutping romanization
 pycantonese>=3.4.0
 
+# Translation fallback (free, no API key needed)
+deep-translator>=1.11.0
+
 # Anki package generation
 genanki>=0.13.0
 

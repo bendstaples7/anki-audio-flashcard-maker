@@ -38,6 +38,7 @@ setup(
         "google-auth-httplib2>=0.1.0",
         "google-api-python-client>=2.0.0",
         "genanki>=0.13.0",
+        "deep-translator>=1.11.0",
     ],
     extras_require={
         "dev": [
