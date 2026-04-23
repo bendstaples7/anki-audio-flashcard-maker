@@ -50,19 +50,19 @@
             <!-- Spreadsheet Preparation Interface -->
             <section id="spreadsheet-prep-section" class="card" style="display: none;">
                 <h2>Prepare Vocabulary Spreadsheet</h2>
-                <p class="section-description">Enter English terms to automatically generate Cantonese translations and Jyutping romanization</p>
+                <p class="section-description">Enter vocabulary terms to generate Cantonese translations and Jyutping romanization. You can enter English-only terms, or mixed input with Chinese characters and romanization already included.</p>
                 
                 <!-- Input Interface -->
                 <div class="prep-input-container">
                     <div class="form-group">
                         <label for="english-terms-input">
-                            <span class="label-text">English Terms</span>
-                            <span class="label-hint">Enter one term per line (e.g., hello, goodbye, thank you)</span>
+                            <span class="label-text">Vocabulary Terms</span>
+                            <span class="label-hint">Enter one term per line. Supports English, Chinese characters, and Jyutping/Pinyin. Use tabs or | to separate columns.</span>
                         </label>
                         <textarea 
                             id="english-terms-input" 
                             class="english-terms-textarea"
-                            placeholder="Enter English terms, one per line:&#10;&#10;hello&#10;goodbye&#10;thank you&#10;good morning&#10;how are you"
+                            placeholder="Enter terms, one per line. Examples:&#10;&#10;hello&#10;goodbye&#10;hello&#9;你好&#9;nei5 hou2&#10;thank you | 多謝 | do1 ze6&#10;你好&#10;good morning"
                             rows="10"
                         ></textarea>
                     </div>
@@ -411,6 +411,6 @@
         </div>
     </div>
     
-    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/app.js') }}?v={{ asset_version }}"></script>
 </body>
 </html>

@@ -100,6 +100,30 @@ class GoogleDocsAuthenticator:
             # Load existing token if available (with file locking)
             self._credentials = self._load_token()
             
+            # Check if cached token is missing required scopes.
+            # Read scopes directly from the token file because
+            # Credentials.from_authorized_user_file overrides .scopes
+            # with the requested scopes, making the comparison useless.
+            if self._credentials:
+                from cantonese_anki_generator.config import Config
+                required_scopes = set(Config.GOOGLE_DOCS_SCOPES)
+                try:
+                    with open(self.token_path, 'r') as f:
+                        token_data = json.load(f)
+                    persisted = token_data.get('scopes', [])
+                    if isinstance(persisted, str):
+                        persisted = persisted.split()
+                    cached_scopes = set(persisted)
+                except (json.JSONDecodeError, IOError, KeyError):
+                    cached_scopes = set()
+                
+                if not required_scopes.issubset(cached_scopes):
+                    missing = required_scopes - cached_scopes
+                    print(f"Token missing required scopes: {missing}. Re-authentication needed.")
+                    if os.path.exists(self.token_path):
+                        os.remove(self.token_path)
+                    self._credentials = None
+            
             # If there are no valid credentials, request authorization
             if not self._credentials or not self._credentials.valid:
                 if self._credentials and self._credentials.expired and self._credentials.refresh_token:

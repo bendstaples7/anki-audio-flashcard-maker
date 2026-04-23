@@ -592,6 +592,12 @@ section h2 {
     font-size: 0.95em;
 }
 
+.term-jyutping {
+    color: #95a5a6;
+    font-size: 0.85em;
+    font-style: italic;
+}
+
 .term-id {
     font-size: 0.8em;
     color: #bdc3c7;
@@ -1794,6 +1800,15 @@ section h2 {
     display: block;
     font-size: 0.8em;
     color: #e74c3c;
+    margin-top: 4px;
+    font-style: italic;
+}
+
+/* Warning message in cell */
+.warning-message {
+    display: block;
+    font-size: 0.8em;
+    color: #e67e22;
     margin-top: 4px;
     font-style: italic;
 }

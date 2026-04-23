@@ -72,9 +72,11 @@ def test_google_sheets_processor():
             print(f"   Row {i+1}: {row[:4]}")  # Show first 4 columns
         
         print("📋 Step 8: Identifying vocabulary columns...")
-        english_col, cantonese_col = parser.identify_vocabulary_columns(sheet_data)
+        english_col, cantonese_col, jyutping_col = parser.identify_vocabulary_columns(sheet_data)
         print(f"   English column: {english_col + 1} ('{sheet_data[0][english_col] if sheet_data else 'N/A'}')")
         print(f"   Cantonese column: {cantonese_col + 1} ('{sheet_data[0][cantonese_col] if sheet_data else 'N/A'}')")
+        if jyutping_col >= 0:
+            print(f"   Jyutping column: {jyutping_col + 1} ('{sheet_data[0][jyutping_col] if sheet_data else 'N/A'}')")
         
         print("📋 Step 9: Extracting vocabulary pairs...")
         vocabulary_entries = parser.extract_vocabulary_pairs(sheet_data)

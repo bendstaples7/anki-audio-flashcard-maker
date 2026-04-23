@@ -756,6 +756,7 @@ def get_session(session_id: str):
                         'term_id': term.term_id,
                         'english': term.english,
                         'cantonese': term.cantonese,
+                        'jyutping': getattr(term, 'jyutping', ''),
                         'start_time': convert_numpy_types(term.start_time),
                         'end_time': convert_numpy_types(term.end_time),
                         'original_start': convert_numpy_types(term.original_start),
@@ -1838,6 +1839,7 @@ def generate_anki_package(session_id: str):
             vocab_entry = VocabularyEntry(
                 english=term.english,
                 cantonese=term.cantonese,
+                jyutping=getattr(term, 'jyutping', ''),
                 row_index=i
             )
             
@@ -2081,15 +2083,112 @@ def download_package(session_id: str, filename: str):
 # Spreadsheet Preparation Endpoints
 # ============================================================================
 
+@bp.route('/spreadsheet-prep/parse', methods=['POST'])
+def parse_input_text():
+    """
+    Parse raw multi-line input text into structured vocabulary entries.
+
+    Separates mixed-language input (English, Chinese characters, Jyutping/Pinyin)
+    into their respective columns. Supports tab and pipe delimiters, as well as
+    automatic language detection for undelimited input.
+
+    Request Body:
+        {
+            "text": "hello\\t你好\\tnei5 hou2\\ngoodbye\\n你好"
+        }
+
+    Response:
+        {
+            "success": true,
+            "entries": [
+                {"english": "hello", "cantonese": "你好", "jyutping": "nei5 hou2"},
+                {"english": "goodbye", "cantonese": "", "jyutping": ""},
+                {"english": "", "cantonese": "你好", "jyutping": ""}
+            ]
+        }
+    """
+    try:
+        data = request.get_json()
+        if not data:
+            response = format_error_response(
+                error_message='No JSON data provided',
+                error_code=ErrorCode.MISSING_DATA,
+                action_required=ActionRequired.RETRY
+            )
+            return jsonify(response), 400
+
+        text = data.get('text', '')
+        if not isinstance(text, str) or not text.strip():
+            response = format_error_response(
+                error_message='No input text provided',
+                error_code=ErrorCode.EMPTY_INPUT,
+                action_required=ActionRequired.RETRY
+            )
+            return jsonify(response), 400
+
+        from cantonese_anki_generator.spreadsheet_prep.input_parser import parse_input_full
+
+        entries = parse_input_full(text)
+
+        if len(entries) > Config.TRANSLATION_BATCH_SIZE:
+            response = format_error_response(
+                error_message=f'Too many entries ({len(entries)}). Maximum allowed is {Config.TRANSLATION_BATCH_SIZE} per request.',
+                error_code=ErrorCode.INVALID_INPUT,
+                action_required=ActionRequired.RETRY
+            )
+            return jsonify(response), 413
+
+        return jsonify({
+            'success': True,
+            'entries': [
+                {
+                    'english': e.english,
+                    'cantonese': e.cantonese,
+                    'jyutping': e.jyutping
+                }
+                for e in entries
+            ]
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Parse failed: {e!s}", exc_info=True)
+        response = format_error_response(
+            error_message=f'Parse failed: {e!s}',
+            error_code=ErrorCode.PROCESSING_ERROR,
+            action_required=ActionRequired.RETRY
+        )
+        return jsonify(response), 500
+
+
 @bp.route('/spreadsheet-prep/translate', methods=['POST'])
 def translate_terms():
     """
     Translate English terms to Cantonese and generate Jyutping.
     
-    Request Body:
+    Accepts three request formats:
+    
+    1. Raw text (multi-line input, parsed server-side):
+        {
+            "raw_text": "hello\\ngoodbye\\nhello\\t你好\\tnei5 hou2"
+        }
+    
+    2. Simple terms list (English-only, needs translation):
         {
             "terms": ["hello", "goodbye", ...]
         }
+    
+    3. Pre-parsed entries (mixed input already separated into columns):
+        {
+            "entries": [
+                {"english": "hello", "cantonese": "你好", "jyutping": "nei5 hou2"},
+                {"english": "goodbye", "cantonese": "", "jyutping": ""},
+                ...
+            ]
+        }
+    
+    When entries include cantonese text, translation is skipped for those entries.
+    When entries include jyutping, romanization is skipped for those entries.
+    Only missing fields are filled in via translation/romanization services.
     
     Response:
         {
@@ -2100,13 +2199,6 @@ def translate_terms():
                     "cantonese": "你好",
                     "jyutping": "nei5 hou2",
                     "success": true
-                },
-                {
-                    "english": "goodbye",
-                    "cantonese": "",
-                    "jyutping": "",
-                    "success": false,
-                    "error": "Translation service unavailable"
                 }
             ],
             "summary": {
@@ -2130,101 +2222,135 @@ def translate_terms():
             )
             return jsonify(response), 400
         
-        terms = data.get('terms', [])
+        # Support "raw_text", "entries", and "terms" formats
+        raw_text = data.get('raw_text', None)
+        entries_data = data.get('entries', None)
+        terms = data.get('terms', None)
         
-        if not isinstance(terms, list):
-            logger.warning("Invalid 'terms' field in request - not a list")
+        if raw_text is not None:
+            # Raw text format: parse server-side then process
+            if not isinstance(raw_text, str) or not raw_text.strip():
+                response = format_error_response(
+                    error_message='Empty or invalid raw_text provided',
+                    error_code=ErrorCode.EMPTY_INPUT,
+                    action_required=ActionRequired.RETRY
+                )
+                return jsonify(response), 400
+            
+            from cantonese_anki_generator.spreadsheet_prep.input_parser import parse_input_full
+            parsed = parse_input_full(raw_text)
+            
+            if not parsed:
+                response = format_error_response(
+                    error_message='No terms found in input text',
+                    error_code=ErrorCode.EMPTY_INPUT,
+                    action_required=ActionRequired.RETRY
+                )
+                return jsonify(response), 400
+            
+            # Enforce max entries limit
+            max_terms = Config.TRANSLATION_BATCH_SIZE
+            if len(parsed) > max_terms:
+                response = format_error_response(
+                    error_message=f'Too many entries ({len(parsed)}). Maximum is {max_terms} per request.',
+                    error_code=ErrorCode.INVALID_INPUT,
+                    action_required=ActionRequired.RETRY
+                )
+                return jsonify(response), 413
+            
+            entries_data = [
+                {'english': e.english, 'cantonese': e.cantonese, 'jyutping': e.jyutping}
+                for e in parsed
+            ]
+            return _process_parsed_entries(entries_data)
+        
+        elif entries_data is not None:
+            # New format: pre-parsed entries with separated fields
+            if not isinstance(entries_data, list):
+                logger.warning("Invalid 'entries' field in request - not a list")
+                response = format_error_response(
+                    error_message='Invalid "entries" field. Expected a list of entry objects.',
+                    error_code=ErrorCode.INVALID_INPUT,
+                    action_required=ActionRequired.RETRY
+                )
+                return jsonify(response), 400
+            
+            if len(entries_data) == 0:
+                logger.warning("Empty entries list provided")
+                response = format_error_response(
+                    error_message='Empty entries list provided',
+                    error_code=ErrorCode.EMPTY_INPUT,
+                    action_required=ActionRequired.RETRY
+                )
+                return jsonify(response), 400
+            
+            # Enforce max entries limit
+            max_terms = Config.TRANSLATION_BATCH_SIZE
+            if len(entries_data) > max_terms:
+                logger.warning(f"Entries list exceeds maximum allowed size: {len(entries_data)} > {max_terms}")
+                response = format_error_response(
+                    error_message=f'Too many entries provided. Maximum allowed is {max_terms} per request.',
+                    error_code=ErrorCode.INVALID_INPUT,
+                    action_required=ActionRequired.RETRY
+                )
+                return jsonify(response), 413
+            
+            # Process pre-parsed entries
+            return _process_parsed_entries(entries_data)
+        
+        elif terms is not None:
+            # Legacy format: simple list of English terms
+            if not isinstance(terms, list):
+                logger.warning("Invalid 'terms' field in request - not a list")
+                response = format_error_response(
+                    error_message='Invalid "terms" field. Expected a list of English terms.',
+                    error_code=ErrorCode.INVALID_INPUT,
+                    action_required=ActionRequired.RETRY
+                )
+                return jsonify(response), 400
+            
+            if len(terms) == 0:
+                logger.warning("Empty terms list provided")
+                response = format_error_response(
+                    error_message='Empty terms list provided',
+                    error_code=ErrorCode.EMPTY_INPUT,
+                    action_required=ActionRequired.RETRY
+                )
+                return jsonify(response), 400
+            
+            # Enforce max terms limit to prevent DoS/rate exhaustion
+            max_terms = Config.TRANSLATION_BATCH_SIZE
+            if len(terms) > max_terms:
+                logger.warning(f"Terms list exceeds maximum allowed size: {len(terms)} > {max_terms}")
+                response = format_error_response(
+                    error_message=f'Too many terms provided. Maximum allowed is {max_terms} terms per request.',
+                    error_code=ErrorCode.INVALID_INPUT,
+                    action_required=ActionRequired.RETRY
+                )
+                return jsonify(response), 413
+            
+            # Validate all terms are strings
+            for i, term in enumerate(terms):
+                if not isinstance(term, str):
+                    response = format_error_response(
+                        error_message=f'Invalid term at index {i}: expected string, got {type(term).__name__}.',
+                        error_code=ErrorCode.INVALID_INPUT,
+                        action_required=ActionRequired.RETRY
+                    )
+                    return jsonify(response), 400
+            
+            # Convert to entries format for unified processing
+            entries_data = [{'english': term, 'cantonese': '', 'jyutping': ''} for term in terms]
+            return _process_parsed_entries(entries_data)
+        
+        else:
+            logger.warning("No recognized payload field in translate request")
             response = format_error_response(
-                error_message='Invalid "terms" field. Expected a list of English terms.',
-                error_code=ErrorCode.INVALID_INPUT,
+                error_message='Request must include "raw_text" (string), "terms" (list of strings), or "entries" (list of objects with english/cantonese/jyutping fields).',
+                error_code=ErrorCode.MISSING_DATA,
                 action_required=ActionRequired.RETRY
             )
             return jsonify(response), 400
-        
-        if len(terms) == 0:
-            logger.warning("Empty terms list provided")
-            response = format_error_response(
-                error_message='Empty terms list provided',
-                error_code=ErrorCode.EMPTY_INPUT,
-                action_required=ActionRequired.RETRY
-            )
-            return jsonify(response), 400
-        
-        # Enforce max terms limit to prevent DoS/rate exhaustion
-        max_terms = Config.TRANSLATION_BATCH_SIZE
-        if len(terms) > max_terms:
-            logger.warning(f"Terms list exceeds maximum allowed size: {len(terms)} > {max_terms}")
-            response = format_error_response(
-                error_message=f'Too many terms provided. Maximum allowed is {max_terms} terms per request.',
-                error_code=ErrorCode.INVALID_INPUT,
-                action_required=ActionRequired.RETRY
-            )
-            return jsonify(response), 413  # 413 Payload Too Large
-        
-        # Initialize services
-        from cantonese_anki_generator.spreadsheet_prep.translation_service import GoogleTranslationService
-        from cantonese_anki_generator.spreadsheet_prep.romanization_service import PyCantoneseRomanizationService
-        
-        translation_service = GoogleTranslationService()
-        romanization_service = PyCantoneseRomanizationService()
-        
-        logger.info(f"Translating {len(terms)} terms")
-        
-        # Translate all terms
-        translation_results = translation_service.translate_batch(terms)
-        
-        # Prepare results list
-        results = []
-        successful_count = 0
-        failed_count = 0
-        
-        # For each translation result, generate Jyutping if translation succeeded
-        for trans_result in translation_results:
-            if trans_result.success:
-                # Translation succeeded, now romanize
-                rom_result = romanization_service.romanize(trans_result.cantonese)
-                
-                if rom_result.success:
-                    # Both translation and romanization succeeded
-                    results.append({
-                        'english': trans_result.english,
-                        'cantonese': trans_result.cantonese,
-                        'jyutping': rom_result.jyutping,
-                        'success': True
-                    })
-                    successful_count += 1
-                else:
-                    # Translation succeeded but romanization failed
-                    results.append({
-                        'english': trans_result.english,
-                        'cantonese': trans_result.cantonese,
-                        'jyutping': '',
-                        'success': True,
-                        'romanization_error': rom_result.error
-                    })
-                    successful_count += 1
-            else:
-                # Translation failed
-                results.append({
-                    'english': trans_result.english,
-                    'cantonese': '',
-                    'jyutping': '',
-                    'success': False,
-                    'error': trans_result.error
-                })
-                failed_count += 1
-        
-        logger.info(f"Translation complete: {successful_count} successful, {failed_count} failed")
-        
-        return jsonify({
-            'success': True,
-            'results': results,
-            'summary': {
-                'total': len(terms),
-                'successful': successful_count,
-                'failed': failed_count
-            }
-        }), 200
         
     except Exception as e:
         logger.error(f"Translation failed with unexpected error: {e}", exc_info=True)
@@ -2234,6 +2360,105 @@ def translate_terms():
             action_required=ActionRequired.RETRY
         )
         return jsonify(response), 500
+
+
+def _process_parsed_entries(entries_data):
+    """
+    Process pre-parsed vocabulary entries, filling in missing translations
+    and romanizations only where needed.
+    
+    Args:
+        entries_data: List of dicts with english/cantonese/jyutping fields
+        
+    Returns:
+        JSON response with results and summary
+    """
+    from cantonese_anki_generator.spreadsheet_prep.translation_service import GoogleTranslationService
+    from cantonese_anki_generator.spreadsheet_prep.romanization_service import PyCantoneseRomanizationService
+    
+    translation_service = GoogleTranslationService()
+    romanization_service = PyCantoneseRomanizationService()
+    
+    logger.info(f"Processing {len(entries_data)} entries")
+    
+    results = []
+    successful_count = 0
+    failed_count = 0
+    
+    for entry_data in entries_data:
+        if not isinstance(entry_data, dict):
+            results.append({
+                'english': str(entry_data) if entry_data is not None else '',
+                'cantonese': '', 'jyutping': '',
+                'success': False, 'error': 'Invalid entry format'
+            })
+            failed_count += 1
+            continue
+        
+        english = str(entry_data.get('english', '') or '').strip()
+        cantonese = str(entry_data.get('cantonese', '') or '').strip()
+        jyutping = str(entry_data.get('jyutping', '') or '').strip()
+        
+        errors = []
+        
+        # Step 1: If cantonese is missing but english is present, translate
+        if not cantonese and english:
+            trans_result = translation_service.translate(english)
+            if trans_result.success:
+                cantonese = trans_result.cantonese
+            else:
+                errors.append(trans_result.error or 'Translation failed')
+        
+        # Step 2: If jyutping is missing but cantonese is present, romanize
+        if not jyutping and cantonese:
+            rom_result = romanization_service.romanize(cantonese)
+            if rom_result.success:
+                jyutping = rom_result.jyutping
+            else:
+                # Romanization failure is non-fatal — entry is still usable
+                errors.append(rom_result.error or 'Romanization failed')
+        
+        # Determine success: entry needs both english AND cantonese to be
+        # considered fully successful. If translation failed, the entry is
+        # still shown in the review table but marked as needing attention.
+        entry_success = bool(english) and bool(cantonese)
+        
+        result = {
+            'english': english,
+            'cantonese': cantonese,
+            'jyutping': jyutping,
+            'success': entry_success
+        }
+        
+        if not entry_success:
+            if errors:
+                result['error'] = '; '.join(errors)
+            elif not english and not cantonese:
+                result['error'] = 'Missing required fields'
+            elif not cantonese:
+                result['error'] = 'Translation failed — enter Cantonese manually'
+            else:
+                result['error'] = 'Missing English term'
+            failed_count += 1
+        else:
+            if errors:
+                # Partial success (e.g., romanization failed but translation worked)
+                result['warnings'] = errors
+            successful_count += 1
+        
+        results.append(result)
+    
+    logger.info(f"Processing complete: {successful_count} successful, {failed_count} failed")
+    
+    return jsonify({
+        'success': True,
+        'results': results,
+        'summary': {
+            'total': len(entries_data),
+            'successful': successful_count,
+            'failed': failed_count
+        }
+    }), 200
 
 
 @bp.route('/spreadsheet-prep/export', methods=['POST'])

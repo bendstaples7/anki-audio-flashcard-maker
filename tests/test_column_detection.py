@@ -19,9 +19,11 @@ def test_detection():
         print(f"Row {i}: {row}")
     
     print("\nColumn detection:")
-    eng_col, cant_col = parser.identify_vocabulary_columns(sheet_data)
+    eng_col, cant_col, jyut_col = parser.identify_vocabulary_columns(sheet_data)
     print(f"English column: {eng_col} ('{sheet_data[0][eng_col] if sheet_data else 'N/A'}')")
     print(f"Cantonese column: {cant_col} ('{sheet_data[0][cant_col] if sheet_data else 'N/A'}')")
+    if jyut_col >= 0:
+        print(f"Jyutping column: {jyut_col} ('{sheet_data[0][jyut_col] if sheet_data else 'N/A'}')")
     
     print("\nExtracting vocabulary:")
     entries = parser.extract_vocabulary_pairs(sheet_data)

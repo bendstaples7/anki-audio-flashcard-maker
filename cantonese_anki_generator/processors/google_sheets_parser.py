@@ -163,23 +163,25 @@ class GoogleSheetsParser:
             else:
                 raise GoogleDocsAuthError(f"Failed to retrieve sheet data: {e}")
     
-    def identify_vocabulary_columns(self, sheet_data: List[List[str]]) -> Tuple[int, int]:
+    def identify_vocabulary_columns(self, sheet_data: List[List[str]]) -> Tuple[int, int, int]:
         """
-        Identify which columns contain English and Cantonese content.
+        Identify which columns contain English, Cantonese, and Jyutping content.
         
         Args:
             sheet_data: 2D list of sheet data
             
         Returns:
-            Tuple of (english_column_index, cantonese_column_index)
+            Tuple of (english_column_index, cantonese_column_index, jyutping_column_index)
+            jyutping_column_index is -1 if no Jyutping column is detected.
         """
         if not sheet_data or len(sheet_data[0]) < 2:
-            return (0, 1)  # Default mapping
+            return (0, 1, -1)  # Default mapping, no jyutping
         
         # Check header row for clues
         header_row = sheet_data[0]
         english_col = 0
         cantonese_col = 1
+        jyutping_col = -1
         
         for i, header in enumerate(header_row[:4]):  # Check first 4 columns
             header_lower = str(header).lower().strip()
@@ -187,6 +189,8 @@ class GoogleSheetsParser:
                 english_col = i
             elif any(word in header_lower for word in ['cantonese', 'chinese', '中文', '粵語']):
                 cantonese_col = i
+            elif any(word in header_lower for word in ['jyutping', 'pinyin', 'romanization', 'romanisation', 'pronunciation']):
+                jyutping_col = i
         
         # Validate mapping by checking content
         if len(sheet_data) > 1:
@@ -237,7 +241,30 @@ class GoogleSheetsParser:
                         cantonese_col = 0
                         english_col = 1
         
-        return (english_col, cantonese_col)
+        # Auto-detect jyutping column if not found by header
+        if jyutping_col == -1 and len(sheet_data[0]) >= 3:
+            # Check remaining columns for romanization patterns (letters + tone numbers)
+            used_cols = {english_col, cantonese_col}
+            sample_rows = sheet_data[1:min(6, len(sheet_data))]
+            
+            for col_idx in range(min(4, len(sheet_data[0]))):
+                if col_idx in used_cols:
+                    continue
+                # Check if this column has romanization-like content
+                romanized_count = 0
+                total_count = 0
+                for row in sample_rows:
+                    if col_idx < len(row) and str(row[col_idx]).strip():
+                        total_count += 1
+                        text = str(row[col_idx]).strip()
+                        if re.search(r'[a-zA-Z]+\d', text) and not self._looks_like_english(text):
+                            romanized_count += 1
+                
+                if total_count > 0 and romanized_count / total_count >= 0.5:
+                    jyutping_col = col_idx
+                    break
+        
+        return (english_col, cantonese_col, jyutping_col)
     
     def _looks_like_english(self, text: str) -> bool:
         """Check if text looks like English."""
@@ -383,7 +410,7 @@ class GoogleSheetsParser:
         vocabulary_entries = []
         
         # Determine column mapping
-        english_col, cantonese_col = self.identify_vocabulary_columns(sheet_data)
+        english_col, cantonese_col, jyutping_col = self.identify_vocabulary_columns(sheet_data)
         
         # Auto-detect if first row is header if not specified
         if skip_header is None:
@@ -414,9 +441,14 @@ class GoogleSheetsParser:
                     confidence *= 0.7
                 
                 # Create vocabulary entry
+                jyutping = ""
+                if jyutping_col >= 0 and jyutping_col < len(row):
+                    jyutping = self._clean_text(row[jyutping_col])
+                
                 entry = VocabularyEntry(
                     english=english,
                     cantonese=cantonese,
+                    jyutping=jyutping,
                     row_index=row_index + 1,  # 1-based for user display
                     confidence=confidence
                 )

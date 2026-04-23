@@ -139,6 +139,7 @@ class AnkiPackageGenerator:
                 english=vocab.english,
                 cantonese=vocab.cantonese,
                 audio_filename=audio_filename,
+                jyutping=vocab.jyutping,
                 tags=[]
             )
             
@@ -148,6 +149,7 @@ class AnkiPackageGenerator:
                 fields=[
                     fields['English'],
                     fields['Cantonese'],
+                    fields['Jyutping'],
                     fields['Audio'],
                     fields['Tags']
                 ]

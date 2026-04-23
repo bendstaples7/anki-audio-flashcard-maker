@@ -132,6 +132,11 @@ def create_app():
     app.config['UPLOAD_FOLDER'] = os.path.join(os.getcwd(), 'temp', 'uploads')
     app.config['SESSION_FOLDER'] = os.path.join(os.getcwd(), 'temp', 'sessions')
     
+    # Disable static file caching in debug mode so JS changes take effect immediately
+    debug_mode = os.environ.get('FLASK_DEBUG', 'True').lower() == 'true'
+    if debug_mode:
+        app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
+    
     # Ensure required directories exist
     os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
     os.makedirs(app.config['SESSION_FOLDER'], exist_ok=True)
@@ -186,6 +191,20 @@ def create_app():
     
     # Register routes
     register_routes(app)
+    
+    # Inject asset version for cache-busting (stable per deploy, not per request)
+    _asset_version = None
+    
+    @app.context_processor
+    def inject_asset_version():
+        nonlocal _asset_version
+        if _asset_version is None:
+            js_path = os.path.join(app.static_folder, 'js', 'app.js')
+            if os.path.exists(js_path):
+                _asset_version = str(int(os.path.getmtime(js_path)))
+            else:
+                _asset_version = '0'
+        return {'asset_version': _asset_version}
     
     return app
 

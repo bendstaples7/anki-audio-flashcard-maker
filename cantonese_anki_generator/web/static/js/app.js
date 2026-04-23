@@ -1501,7 +1501,7 @@ function handleEnglishTermsInput(event) {
 }
 
 /**
- * Parse input text into individual English terms
+ * Parse input text into individual English terms (legacy)
  * Requirements: 2.2, 2.3, 2.4, 2.5
  * @param {string} inputText - Multi-line input text
  * @returns {string[]} Array of parsed terms
@@ -1522,22 +1522,23 @@ function parseEnglishTerms(inputText) {
  * Handle Generate Translations button click
  * Requirements: 2.2, 2.3, 2.4, 2.5, 3.1
  * Task 12.2: Show progress indicator when translation starts
+ *
+ * Sends raw input text to /spreadsheet-prep/translate which handles
+ * both parsing and translation in a single request.
  */
 async function handleGenerateTranslations() {
     const inputText = AppState.spreadsheetPrep.inputText;
     
-    // Parse input into terms
-    const terms = parseEnglishTerms(inputText);
-    
-    if (terms.length === 0) {
-        showError('Please enter at least one English term');
+    if (!inputText || !inputText.trim()) {
+        showError('Please enter at least one term');
         return;
     }
     
-    // Store parsed terms
-    AppState.spreadsheetPrep.parsedTerms = terms;
+    // Store parsed terms (legacy compat) — simple line split
+    const lines = inputText.split('\n').map(l => l.trim()).filter(l => l);
+    AppState.spreadsheetPrep.parsedTerms = lines;
     
-    console.log(`Generating translations for ${terms.length} terms:`, terms);
+    console.log(`Generating translations for ${lines.length} lines`);
     
     // Disable button and show loading state
     const generateBtn = elements.generateTranslationsBtn;
@@ -1547,18 +1548,14 @@ async function handleGenerateTranslations() {
     }
     
     // Show progress indicator (Requirements: 8.1)
-    showTranslationProgress(terms.length);
+    showTranslationProgress(lines.length);
     
     try {
-        // Call translation API
+        // Single API call: send raw text, server handles parsing + translation
         const response = await fetchWithRetry(`${API_BASE}/spreadsheet-prep/translate`, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                terms: terms
-            })
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ raw_text: inputText })
         });
         
         if (!response.ok) {
@@ -1776,6 +1773,13 @@ function createReviewTableRow(entry, index) {
         errorMsg.textContent = entry.error;
         cantoneseCell.appendChild(cantoneseDiv);
         cantoneseCell.appendChild(errorMsg);
+    } else if (entry.warnings && Array.isArray(entry.warnings) && !entry.cantonese
+              && entry.warnings.some(w => /translat/i.test(w))) {
+        const warnMsg = document.createElement('div');
+        warnMsg.className = 'warning-message';
+        warnMsg.textContent = 'Translation unavailable — enter manually';
+        cantoneseCell.appendChild(cantoneseDiv);
+        cantoneseCell.appendChild(warnMsg);
     } else {
         cantoneseCell.appendChild(cantoneseDiv);
     }
@@ -1796,6 +1800,15 @@ function createReviewTableRow(entry, index) {
     }
     
     jyutpingCell.appendChild(jyutpingDiv);
+    
+    // Show warning if romanization failed
+    if (entry.warnings && Array.isArray(entry.warnings) && !entry.jyutping
+        && entry.warnings.some(w => /romaniz/i.test(w))) {
+        const warnMsg = document.createElement('div');
+        warnMsg.className = 'warning-message';
+        warnMsg.textContent = 'Romanization unavailable — enter manually';
+        jyutpingCell.appendChild(warnMsg);
+    }
     
     // Status column
     const statusCell = document.createElement('td');
@@ -1871,6 +1884,11 @@ function handleCellEdit(event) {
         // Remove empty class if content was added
         if (value) {
             target.classList.remove('empty');
+            // Remove warning message when user provides content
+            const parentCell = target.closest('td');
+            if (parentCell) {
+                parentCell.querySelectorAll('.warning-message, .error-message').forEach(el => el.remove());
+            }
         } else {
             target.classList.add('empty');
         }
@@ -2383,11 +2401,20 @@ function createTermRow(termAlignment) {
     // Term info column
     const termInfo = document.createElement('div');
     termInfo.className = 'term-info';
-    termInfo.innerHTML = `
+    
+    let termHtml = `
         <div class="term-english">${escapeHtml(termAlignment.english)}</div>
-        <div class="term-cantonese">${escapeHtml(termAlignment.cantonese)}</div>
-        <div class="term-id">#${termAlignment.term_id}</div>
-    `;
+        <div class="term-cantonese">${escapeHtml(termAlignment.cantonese)}</div>`;
+    
+    if (termAlignment.jyutping) {
+        termHtml += `
+        <div class="term-jyutping">${escapeHtml(termAlignment.jyutping)}</div>`;
+    }
+    
+    termHtml += `
+        <div class="term-id">#${termAlignment.term_id}</div>`;
+    
+    termInfo.innerHTML = termHtml;
     
     // Waveform column
     const waveformCell = document.createElement('div');
