@@ -23,7 +23,8 @@ class Config:
     GOOGLE_DOCS_SCOPES = [
         "https://www.googleapis.com/auth/documents.readonly",
         "https://www.googleapis.com/auth/spreadsheets.readonly",
-        "https://www.googleapis.com/auth/spreadsheets"  # Write access for spreadsheet preparation
+        "https://www.googleapis.com/auth/spreadsheets",  # Write access for spreadsheet preparation
+        "https://www.googleapis.com/auth/cloud-translation"  # Translation API for spreadsheet prep
     ]
     CREDENTIALS_FILE = "credentials.json"
     TOKEN_FILE = "token.json"
