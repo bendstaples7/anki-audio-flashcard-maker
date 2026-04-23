@@ -16,7 +16,7 @@ def test_translate_endpoint_with_valid_input(client):
         # Setup mock translation service
         mock_trans_instance = Mock()
         mock_trans.return_value = mock_trans_instance
-        mock_trans_instance.translate_batch.return_value = [
+        mock_trans_instance.translate.side_effect = [
             TranslationResult(english="hello", cantonese="你好", success=True),
             TranslationResult(english="goodbye", cantonese="再見", success=True)
         ]

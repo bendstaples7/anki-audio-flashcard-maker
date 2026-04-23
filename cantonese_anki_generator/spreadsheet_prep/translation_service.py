@@ -130,13 +130,16 @@ class GoogleTranslationService(TranslationService):
                     error=f"Translation API error: {str(e)}"
                 )
         else:
-            # Mock translation fallback
-            mock_translation = f"[Mock: {english_term}]"
+            # No real API available — report failure instead of silent mock data
             return TranslationResult(
                 english=english_term,
-                cantonese=mock_translation,
-                success=True,
-                confidence=0.5
+                cantonese="",
+                success=False,
+                error=(
+                    "Translation API not available. "
+                    "Set GOOGLE_APPLICATION_CREDENTIALS to your service account key file, "
+                    "or install google-cloud-translate."
+                )
             )
     
     def translate_batch(self, terms: List[str]) -> List[TranslationResult]:
