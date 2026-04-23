@@ -132,6 +132,9 @@ def create_app():
     app.config['UPLOAD_FOLDER'] = os.path.join(os.getcwd(), 'temp', 'uploads')
     app.config['SESSION_FOLDER'] = os.path.join(os.getcwd(), 'temp', 'sessions')
     
+    # Disable static file caching in debug mode so JS changes take effect immediately
+    app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
+    
     # Ensure required directories exist
     os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
     os.makedirs(app.config['SESSION_FOLDER'], exist_ok=True)
