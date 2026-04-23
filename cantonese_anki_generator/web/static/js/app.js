@@ -1523,10 +1523,8 @@ function parseEnglishTerms(inputText) {
  * Requirements: 2.2, 2.3, 2.4, 2.5, 3.1
  * Task 12.2: Show progress indicator when translation starts
  *
- * Flow:
- * 1. Send raw input text to /spreadsheet-prep/parse (server-side parsing)
- * 2. Send parsed entries to /spreadsheet-prep/translate (fill missing fields)
- * 3. Display results in review table
+ * Sends raw input text to /spreadsheet-prep/translate which handles
+ * both parsing and translation in a single request.
  */
 async function handleGenerateTranslations() {
     const inputText = AppState.spreadsheetPrep.inputText;
@@ -1536,59 +1534,28 @@ async function handleGenerateTranslations() {
         return;
     }
     
+    // Store parsed terms (legacy compat) — simple line split
+    const lines = inputText.split('\n').map(l => l.trim()).filter(l => l);
+    AppState.spreadsheetPrep.parsedTerms = lines;
+    
+    console.log(`Generating translations for ${lines.length} lines`);
+    
     // Disable button and show loading state
     const generateBtn = elements.generateTranslationsBtn;
     if (generateBtn) {
         generateBtn.disabled = true;
-        generateBtn.innerHTML = '<span class="btn-icon">⏳</span> Parsing...';
+        generateBtn.innerHTML = '<span class="btn-icon">⏳</span> Generating...';
     }
     
+    // Show progress indicator (Requirements: 8.1)
+    showTranslationProgress(lines.length);
+    
     try {
-        // Step 1: Parse input server-side
-        const parseResponse = await fetchWithRetry(`${API_BASE}/spreadsheet-prep/parse`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text: inputText })
-        });
-        
-        if (!parseResponse.ok) {
-            let errorMessage = 'Failed to parse input';
-            try {
-                const contentType = parseResponse.headers.get('content-type');
-                if (contentType && contentType.includes('application/json')) {
-                    const errorData = await parseResponse.json();
-                    errorMessage = errorData.error || errorMessage;
-                }
-            } catch (e) { /* ignore parse errors */ }
-            throw new Error(errorMessage);
-        }
-        
-        const parseData = await parseResponse.json();
-        const parsedEntries = parseData.entries || [];
-        
-        if (parsedEntries.length === 0) {
-            showError('No terms found in input. Enter one term per line.');
-            return;
-        }
-        
-        // Store parsed terms (legacy compat)
-        AppState.spreadsheetPrep.parsedTerms = parsedEntries.map(
-            e => e.english || e.cantonese || e.jyutping
-        );
-        
-        console.log(`Parsed ${parsedEntries.length} entries, now translating:`, parsedEntries);
-        
-        // Step 2: Translate/romanize missing fields
-        if (generateBtn) {
-            generateBtn.innerHTML = '<span class="btn-icon">⏳</span> Translating...';
-        }
-        
-        showTranslationProgress(parsedEntries.length);
-        
+        // Single API call: send raw text, server handles parsing + translation
         const response = await fetchWithRetry(`${API_BASE}/spreadsheet-prep/translate`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ entries: parsedEntries })
+            body: JSON.stringify({ raw_text: inputText })
         });
         
         if (!response.ok) {

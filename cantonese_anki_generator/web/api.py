@@ -2207,11 +2207,49 @@ def translate_terms():
             )
             return jsonify(response), 400
         
-        # Support both "terms" (legacy) and "entries" (new pre-parsed) formats
+        # Support "raw_text", "entries", and "terms" formats
+        raw_text = data.get('raw_text', None)
         entries_data = data.get('entries', None)
         terms = data.get('terms', None)
         
-        if entries_data is not None:
+        if raw_text is not None:
+            # Raw text format: parse server-side then process
+            if not isinstance(raw_text, str) or not raw_text.strip():
+                response = format_error_response(
+                    error_message='Empty or invalid raw_text provided',
+                    error_code=ErrorCode.EMPTY_INPUT,
+                    action_required=ActionRequired.RETRY
+                )
+                return jsonify(response), 400
+            
+            from cantonese_anki_generator.spreadsheet_prep.input_parser import parse_input_full
+            parsed = parse_input_full(raw_text)
+            
+            if not parsed:
+                response = format_error_response(
+                    error_message='No terms found in input text',
+                    error_code=ErrorCode.EMPTY_INPUT,
+                    action_required=ActionRequired.RETRY
+                )
+                return jsonify(response), 400
+            
+            # Enforce max entries limit
+            max_terms = Config.TRANSLATION_BATCH_SIZE
+            if len(parsed) > max_terms:
+                response = format_error_response(
+                    error_message=f'Too many entries ({len(parsed)}). Maximum is {max_terms} per request.',
+                    error_code=ErrorCode.INVALID_INPUT,
+                    action_required=ActionRequired.RETRY
+                )
+                return jsonify(response), 413
+            
+            entries_data = [
+                {'english': e.english, 'cantonese': e.cantonese, 'jyutping': e.jyutping}
+                for e in parsed
+            ]
+            return _process_parsed_entries(entries_data)
+        
+        elif entries_data is not None:
             # New format: pre-parsed entries with separated fields
             if not isinstance(entries_data, list):
                 logger.warning("Invalid 'entries' field in request - not a list")
