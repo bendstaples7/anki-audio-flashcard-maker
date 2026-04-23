@@ -1519,250 +1519,76 @@ function parseEnglishTerms(inputText) {
 }
 
 /**
- * Check if a character is a CJK (Chinese/Japanese/Korean) character
- * @param {string} char - Single character
- * @returns {boolean}
- */
-function isCJKChar(char) {
-    const cp = char.codePointAt(0);
-    // CJK Unified Ideographs
-    if (cp >= 0x4E00 && cp <= 0x9FFF) return true;
-    // CJK Extension A
-    if (cp >= 0x3400 && cp <= 0x4DBF) return true;
-    // CJK Extension B
-    if (cp >= 0x20000 && cp <= 0x2A6DF) return true;
-    // CJK Compatibility Ideographs
-    if (cp >= 0xF900 && cp <= 0xFAFF) return true;
-    // CJK Symbols and Punctuation
-    if (cp >= 0x3000 && cp <= 0x303F) return true;
-    // Fullwidth forms
-    if (cp >= 0xFF00 && cp <= 0xFFEF) return true;
-    return false;
-}
-
-/**
- * Check if text contains CJK characters
- * @param {string} text
- * @returns {boolean}
- */
-function containsCJK(text) {
-    for (const char of text) {
-        if (isCJKChar(char)) return true;
-    }
-    return false;
-}
-
-/**
- * Check if a token looks like Jyutping romanization (letters + tone 1-6)
- * @param {string} token
- * @returns {boolean}
- */
-function isJyutpingToken(token) {
-    return /^[a-z]+[1-6]$/i.test(token.trim());
-}
-
-/**
- * Check if a token looks like Pinyin romanization
- * @param {string} token
- * @returns {boolean}
- */
-function isPinyinToken(token) {
-    const toneMarks = 'āáǎàēéěèīíǐìōóǒòūúǔùǖǘǚǜ';
-    for (const c of token) {
-        if (toneMarks.includes(c)) return true;
-    }
-    return /^[a-z]+[1-5]$/i.test(token.trim());
-}
-
-/**
- * Check if text is a sequence of romanization tokens
- * @param {string} text
- * @returns {boolean}
- */
-function isRomanizationSequence(text) {
-    const tokens = text.trim().split(/\s+/);
-    if (tokens.length === 0) return false;
-    let romanCount = 0;
-    for (const token of tokens) {
-        const clean = token.replace(/[.,;:!?()\[\]{}]/g, '');
-        if (!clean) continue;
-        if (isJyutpingToken(clean) || isPinyinToken(clean)) romanCount++;
-    }
-    return romanCount > 0 && romanCount >= tokens.length * 0.5;
-}
-
-/**
- * Classify a text segment as 'english', 'chinese', or 'romanization'
- * @param {string} text
- * @returns {string}
- */
-function classifySegment(text) {
-    text = text.trim();
-    if (!text) return 'unknown';
-    if (containsCJK(text)) return 'chinese';
-    if (isRomanizationSequence(text)) return 'romanization';
-    return 'english';
-}
-
-/**
- * Extract CJK characters from text
- * @param {string} text
- * @returns {string}
- */
-function extractCJK(text) {
-    const cjkPunctuation = '，。、！？：；「」『』（）';
-    let result = '';
-    for (const char of text) {
-        if (isCJKChar(char) || cjkPunctuation.includes(char)) {
-            result += char;
-        }
-    }
-    return result.trim();
-}
-
-/**
- * Extract English words from text (excluding romanization tokens)
- * @param {string} text
- * @returns {string}
- */
-function extractEnglish(text) {
-    const words = text.match(/[A-Za-z][A-Za-z'\-]*(?:\s+[A-Za-z][A-Za-z'\-]*)*/g) || [];
-    const result = [];
-    for (const phrase of words) {
-        const tokens = phrase.split(/\s+/);
-        const nonRoman = tokens.filter(t => {
-            const clean = t.replace(/[.,;:!?()\[\]{}]/g, '');
-            return clean && !isJyutpingToken(clean) && !isPinyinToken(clean);
-        });
-        if (nonRoman.length > 0) result.push(nonRoman.join(' '));
-    }
-    return result.join(' ').trim();
-}
-
-/**
- * Extract romanization tokens from text
- * @param {string} text
- * @returns {string}
- */
-function extractRomanization(text) {
-    const tokens = text.split(/\s+/);
-    const roman = tokens.filter(t => {
-        const clean = t.replace(/[.,;:!?()\[\]{}]/g, '');
-        return clean && (isJyutpingToken(clean) || isPinyinToken(clean));
-    }).map(t => t.replace(/[.,;:!?()\[\]{}]/g, ''));
-    return roman.join(' ').trim();
-}
-
-/**
- * Parse a single line of mixed-language input into separated components
- * @param {string} line
- * @returns {{english: string, cantonese: string, jyutping: string}}
- */
-function parseMixedLine(line) {
-    line = line.trim();
-    if (!line) return { english: '', cantonese: '', jyutping: '' };
-
-    // Try delimiter-based splitting (tab, pipe, semicolon)
-    let parts = null;
-    if (line.includes('\t')) {
-        parts = line.split('\t').map(p => p.trim()).filter(p => p);
-    } else if (line.includes('|')) {
-        parts = line.split('|').map(p => p.trim()).filter(p => p);
-    } else if (line.includes(';')) {
-        parts = line.split(';').map(p => p.trim()).filter(p => p);
-    }
-
-    if (parts && parts.length >= 2) {
-        const entry = { english: '', cantonese: '', jyutping: '' };
-        for (const part of parts) {
-            const cls = classifySegment(part);
-            if (cls === 'english' && !entry.english) entry.english = part;
-            else if (cls === 'chinese' && !entry.cantonese) entry.cantonese = part;
-            else if (cls === 'romanization' && !entry.jyutping) entry.jyutping = part;
-            else if (!entry.english) entry.english = part;
-            else if (!entry.cantonese) entry.cantonese = part;
-            else if (!entry.jyutping) entry.jyutping = part;
-        }
-        return entry;
-    }
-
-    // No delimiter — try language-based separation
-    if (containsCJK(line)) {
-        return {
-            english: extractEnglish(line),
-            cantonese: extractCJK(line),
-            jyutping: extractRomanization(line)
-        };
-    }
-
-    if (isRomanizationSequence(line)) {
-        return { english: '', cantonese: '', jyutping: line.trim() };
-    }
-
-    // Default: treat as English
-    return { english: line.trim(), cantonese: '', jyutping: '' };
-}
-
-/**
- * Parse multi-line input into structured entries with separated columns
- * @param {string} inputText - Multi-line input text
- * @returns {Array<{english: string, cantonese: string, jyutping: string}>}
- */
-function parseInputFull(inputText) {
-    const lines = inputText.split('\n');
-    const entries = [];
-    for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-        const entry = parseMixedLine(trimmed);
-        if (entry.english || entry.cantonese || entry.jyutping) {
-            entries.push(entry);
-        }
-    }
-    return entries;
-}
-
-/**
  * Handle Generate Translations button click
  * Requirements: 2.2, 2.3, 2.4, 2.5, 3.1
  * Task 12.2: Show progress indicator when translation starts
+ *
+ * Flow:
+ * 1. Send raw input text to /spreadsheet-prep/parse (server-side parsing)
+ * 2. Send parsed entries to /spreadsheet-prep/translate (fill missing fields)
+ * 3. Display results in review table
  */
 async function handleGenerateTranslations() {
     const inputText = AppState.spreadsheetPrep.inputText;
     
-    // Parse input into structured entries with column separation
-    const parsedEntries = parseInputFull(inputText);
-    
-    if (parsedEntries.length === 0) {
+    if (!inputText || !inputText.trim()) {
         showError('Please enter at least one term');
         return;
     }
-    
-    // Store parsed terms (legacy compat) and entries
-    AppState.spreadsheetPrep.parsedTerms = parsedEntries.map(e => e.english || e.cantonese || e.jyutping);
-    
-    console.log(`Generating translations for ${parsedEntries.length} entries:`, parsedEntries);
     
     // Disable button and show loading state
     const generateBtn = elements.generateTranslationsBtn;
     if (generateBtn) {
         generateBtn.disabled = true;
-        generateBtn.innerHTML = '<span class="btn-icon">⏳</span> Generating...';
+        generateBtn.innerHTML = '<span class="btn-icon">⏳</span> Parsing...';
     }
     
-    // Show progress indicator (Requirements: 8.1)
-    showTranslationProgress(parsedEntries.length);
-    
     try {
-        // Call translation API with pre-parsed entries
+        // Step 1: Parse input server-side
+        const parseResponse = await fetchWithRetry(`${API_BASE}/spreadsheet-prep/parse`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: inputText })
+        });
+        
+        if (!parseResponse.ok) {
+            let errorMessage = 'Failed to parse input';
+            try {
+                const contentType = parseResponse.headers.get('content-type');
+                if (contentType && contentType.includes('application/json')) {
+                    const errorData = await parseResponse.json();
+                    errorMessage = errorData.error || errorMessage;
+                }
+            } catch (e) { /* ignore parse errors */ }
+            throw new Error(errorMessage);
+        }
+        
+        const parseData = await parseResponse.json();
+        const parsedEntries = parseData.entries || [];
+        
+        if (parsedEntries.length === 0) {
+            showError('No terms found in input. Enter one term per line.');
+            return;
+        }
+        
+        // Store parsed terms (legacy compat)
+        AppState.spreadsheetPrep.parsedTerms = parsedEntries.map(
+            e => e.english || e.cantonese || e.jyutping
+        );
+        
+        console.log(`Parsed ${parsedEntries.length} entries, now translating:`, parsedEntries);
+        
+        // Step 2: Translate/romanize missing fields
+        if (generateBtn) {
+            generateBtn.innerHTML = '<span class="btn-icon">⏳</span> Translating...';
+        }
+        
+        showTranslationProgress(parsedEntries.length);
+        
         const response = await fetchWithRetry(`${API_BASE}/spreadsheet-prep/translate`, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                entries: parsedEntries
-            })
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ entries: parsedEntries })
         });
         
         if (!response.ok) {

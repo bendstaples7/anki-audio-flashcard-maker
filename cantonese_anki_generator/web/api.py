@@ -2081,6 +2081,75 @@ def download_package(session_id: str, filename: str):
 # Spreadsheet Preparation Endpoints
 # ============================================================================
 
+@bp.route('/spreadsheet-prep/parse', methods=['POST'])
+def parse_input_text():
+    """
+    Parse raw multi-line input text into structured vocabulary entries.
+
+    Separates mixed-language input (English, Chinese characters, Jyutping/Pinyin)
+    into their respective columns. Supports tab and pipe delimiters, as well as
+    automatic language detection for undelimited input.
+
+    Request Body:
+        {
+            "text": "hello\\t你好\\tnei5 hou2\\ngoodbye\\n你好"
+        }
+
+    Response:
+        {
+            "success": true,
+            "entries": [
+                {"english": "hello", "cantonese": "你好", "jyutping": "nei5 hou2"},
+                {"english": "goodbye", "cantonese": "", "jyutping": ""},
+                {"english": "", "cantonese": "你好", "jyutping": ""}
+            ]
+        }
+    """
+    try:
+        data = request.get_json()
+        if not data:
+            response = format_error_response(
+                error_message='No JSON data provided',
+                error_code=ErrorCode.MISSING_DATA,
+                action_required=ActionRequired.RETRY
+            )
+            return jsonify(response), 400
+
+        text = data.get('text', '')
+        if not isinstance(text, str) or not text.strip():
+            response = format_error_response(
+                error_message='No input text provided',
+                error_code=ErrorCode.EMPTY_INPUT,
+                action_required=ActionRequired.RETRY
+            )
+            return jsonify(response), 400
+
+        from cantonese_anki_generator.spreadsheet_prep.input_parser import parse_input_full
+
+        entries = parse_input_full(text)
+
+        return jsonify({
+            'success': True,
+            'entries': [
+                {
+                    'english': e.english,
+                    'cantonese': e.cantonese,
+                    'jyutping': e.jyutping
+                }
+                for e in entries
+            ]
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Parse failed with unexpected error: {e}", exc_info=True)
+        response = format_error_response(
+            error_message=f'Parse failed: {str(e)}',
+            error_code=ErrorCode.PROCESSING_ERROR,
+            action_required=ActionRequired.RETRY
+        )
+        return jsonify(response), 500
+
+
 @bp.route('/spreadsheet-prep/translate', methods=['POST'])
 def translate_terms():
     """
@@ -2281,13 +2350,10 @@ def _process_parsed_entries(entries_data):
         # meaningful field populated. The ideal is all three, but partial
         # entries (e.g., English-only needing translation, or Chinese-only
         # needing romanization) are still valid for the review table.
-        has_english = bool(english)
-        has_cantonese = bool(cantonese)
-        has_jyutping = bool(jyutping)
         
         # Entry is successful if we have at least english or cantonese
         # (the user can fill in the rest in the review table)
-        entry_success = has_english or has_cantonese
+        entry_success = bool(english) or bool(cantonese)
         
         result = {
             'english': english,

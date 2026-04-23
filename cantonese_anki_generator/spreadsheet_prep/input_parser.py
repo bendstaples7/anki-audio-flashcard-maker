@@ -6,9 +6,21 @@ and pinyin/jyutping romanization, separating them into their respective fields.
 """
 
 import re
-import unicodedata
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import List
+
+
+# Maximum letter count (before tone digit) for Jyutping/Pinyin syllables.
+# Longest real Jyutping: "gwong" (5 letters). Longest Pinyin: "zhuang" (6 letters).
+# We use 5 as the max — this correctly rejects "lesson1" (6 letters) and
+# "unit3" (4 letters has vowels but we catch it differently).
+# The rare 6-letter Pinyin "zhuang" is an acceptable false negative since
+# it's uncommon and the user can use delimiters for such cases.
+_MAX_ROMANIZATION_LETTERS = 5
+
+# Vowels that must appear in a valid romanization syllable.
+# This prevents matching English words like "mp3" or "nth5".
+_ROMANIZATION_VOWELS = set('aeiouüAEIOUÜ')
 
 
 @dataclass
@@ -62,80 +74,129 @@ def _contains_cjk(text: str) -> bool:
 def _is_jyutping_token(token: str) -> bool:
     """
     Check if a token looks like Jyutping romanization.
-    
-    Jyutping format: consonant(s) + vowel(s) + tone number (1-6)
+
+    Jyutping format: 1-6 letters (containing a vowel) + tone number (1-6).
     Examples: nei5, hou2, m4, gam2, sik1, jat1
+
+    Rejects words like "lesson1", "mp3" — they are too long or lack vowels.
+    The special case "m4" (唔) and "ng5" (五) are valid single-consonant
+    Jyutping syllables, so we allow them explicitly.
     """
-    # Jyutping pattern: letters followed by a tone number 1-6
-    # Allow for compound jyutping separated by spaces
-    jyutping_pattern = re.compile(
-        r'^[a-z]+[1-6]$', re.IGNORECASE
-    )
-    return bool(jyutping_pattern.match(token.strip()))
+    token = token.strip()
+    if len(token) < 2:
+        return False
+    letters = token[:-1]
+    digit = token[-1]
+    if not digit.isdigit() or int(digit) < 1 or int(digit) > 6:
+        return False
+    if not letters.isalpha():
+        return False
+    if len(letters) > _MAX_ROMANIZATION_LETTERS:
+        return False
+    # Must contain a vowel, OR be a known consonant-only syllable (m, ng, n)
+    if not (any(c in _ROMANIZATION_VOWELS for c in letters)
+            or letters.lower() in ('m', 'ng', 'n', 'hm', 'hng')):
+        return False
+    return True
 
 
 def _is_pinyin_token(token: str) -> bool:
     """
     Check if a token looks like pinyin romanization.
-    
-    Pinyin can have tone marks (ā, á, ǎ, à) or tone numbers (1-4, 5 for neutral).
+
+    Pinyin can have tone marks (ā, á, ǎ, à) or tone numbers (1-5).
     Examples: nǐ, hǎo, ma, ni3, hao3
+
+    Rejects long words that happen to end in a digit, and words without vowels.
     """
-    # Check for tone marks (common in pinyin)
+    token = token.strip()
+    if not token:
+        return False
+
+    # Check for tone marks (common in pinyin) — these are definitive
     tone_marks = set('āáǎàēéěèīíǐìōóǒòūúǔùǖǘǚǜ')
     if any(c in tone_marks for c in token):
         return True
+
     # Pinyin with tone numbers (1-5)
-    pinyin_pattern = re.compile(
-        r'^[a-z]+[1-5]$', re.IGNORECASE
-    )
-    return bool(pinyin_pattern.match(token.strip()))
+    if len(token) < 2:
+        return False
+    letters = token[:-1]
+    digit = token[-1]
+    if not digit.isdigit() or int(digit) < 1 or int(digit) > 5:
+        return False
+    if not letters.isalpha():
+        return False
+    if len(letters) > _MAX_ROMANIZATION_LETTERS:
+        return False
+    # Must contain a vowel
+    if not any(c in _ROMANIZATION_VOWELS for c in letters):
+        return False
+    return True
 
 
 def _is_romanization_sequence(text: str) -> bool:
     """
     Check if a text segment is a sequence of Jyutping or Pinyin tokens.
-    
+
+    Requires that *all* non-empty tokens match romanization patterns,
+    AND that there are at least 2 matching tokens. A single token like
+    "unit3" is too ambiguous to classify as romanization on its own.
+
     Examples:
-        "nei5 hou2" -> True (Jyutping)
-        "nǐ hǎo" -> True (Pinyin with tone marks)
-        "ni3 hao3" -> True (Pinyin with tone numbers)
+        "nei5 hou2"  -> True  (Jyutping, 2 tokens)
+        "nǐ hǎo"    -> True  (Pinyin with tone marks)
+        "ni3 hao3"   -> True  (Pinyin with tone numbers)
         "hello world" -> False (English)
+        "unit3"       -> False (single token, ambiguous)
     """
     tokens = text.strip().split()
     if not tokens:
         return False
-    
-    romanization_count = 0
+
+    match_count = 0
     for token in tokens:
-        # Strip common punctuation
         clean = token.strip('.,;:!?()[]{}')
         if not clean:
             continue
-        if _is_jyutping_token(clean) or _is_pinyin_token(clean):
-            romanization_count += 1
-    
-    # Consider it romanization if majority of tokens match
-    return romanization_count > 0 and romanization_count >= len(tokens) * 0.5
+        if not (_is_jyutping_token(clean) or _is_pinyin_token(clean)):
+            return False
+        match_count += 1
+
+    # Require at least 2 matching tokens to reduce false positives
+    return match_count >= 2
 
 
 def _extract_cjk_segment(text: str) -> str:
-    """Extract contiguous CJK characters (and CJK punctuation) from text."""
-    cjk_chars = []
+    """
+    Extract CJK characters and any characters embedded between them
+    (digits, CJK punctuation) from text.
+
+    Preserves digits that appear between CJK characters (e.g., "第1課" -> "第1課").
+    """
+    cjk_punctuation = set('，。、！？：；「」『』（）')
+    result = []
     for char in text:
-        if _is_cjk_char(char) or char in '，。、！？：；「」『』（）':
-            cjk_chars.append(char)
-        elif cjk_chars and char == ' ':
-            # Allow single spaces between CJK segments
-            continue
-    return ''.join(cjk_chars).strip()
+        if _is_cjk_char(char) or char in cjk_punctuation:
+            result.append(char)
+        elif result and (char.isdigit() or char == ' '):
+            # Keep digits and spaces that appear after CJK content
+            # (they may be embedded, e.g., "第1課" or "你 好")
+            result.append(char)
+        elif result and not char.isascii():
+            # Keep other non-ASCII chars that might be related
+            result.append(char)
+
+    # Trim trailing non-CJK characters (spaces/digits at the end)
+    text_out = ''.join(result)
+    # Strip trailing spaces and digits that aren't followed by CJK
+    text_out = re.sub(r'[\s\d]+$', '', text_out)
+    return text_out.strip()
 
 
 def _extract_english_segment(text: str) -> str:
     """Extract English words from text (ASCII letters, common punctuation)."""
-    # Match sequences of ASCII words
     english_words = re.findall(r"[A-Za-z][A-Za-z'\-]*(?:\s+[A-Za-z][A-Za-z'\-]*)*", text)
-    # Filter out tokens that look like romanization
     result_words = []
     for phrase in english_words:
         tokens = phrase.split()
@@ -160,25 +221,24 @@ def _extract_romanization_segment(text: str) -> str:
     return ' '.join(roman_tokens).strip()
 
 
-def _split_by_delimiter(line: str) -> Optional[List[str]]:
+def _split_by_delimiter(line: str) -> List[str]:
     """
-    Try to split a line by common delimiters (tab, |, comma).
-    
-    Returns list of parts if a delimiter is found, None otherwise.
+    Try to split a line by tab or pipe delimiter.
+
+    Only tab and pipe are used — semicolons and commas are too common in
+    natural English text and cause false splits.
+
+    Returns list of parts if a delimiter is found, empty list otherwise.
     """
-    # Try tab first (most common in copy-paste from spreadsheets)
+    # Tab first (most common in copy-paste from spreadsheets)
     if '\t' in line:
         return [p.strip() for p in line.split('\t') if p.strip()]
-    
-    # Try pipe delimiter
+
+    # Pipe delimiter
     if '|' in line:
         return [p.strip() for p in line.split('|') if p.strip()]
-    
-    # Try semicolon
-    if ';' in line:
-        return [p.strip() for p in line.split(';') if p.strip()]
-    
-    return None
+
+    return []
 
 
 def _classify_segment(text: str) -> str:
@@ -188,13 +248,13 @@ def _classify_segment(text: str) -> str:
     text = text.strip()
     if not text:
         return 'unknown'
-    
+
     if _contains_cjk(text):
         return 'chinese'
-    
+
     if _is_romanization_sequence(text):
         return 'romanization'
-    
+
     # Default to english for ASCII text
     return 'english'
 
@@ -202,29 +262,28 @@ def _classify_segment(text: str) -> str:
 def parse_line(line: str) -> ParsedEntry:
     """
     Parse a single line of mixed-language input into separated components.
-    
+
     Handles various input formats:
-    - "hello" -> english only
-    - "hello\t你好\tnei5 hou2" -> tab-delimited
-    - "hello | 你好 | nei5 hou2" -> pipe-delimited
-    - "hello 你好 nei5 hou2" -> space-separated mixed content
-    - "你好" -> chinese only
-    - "nei5 hou2" -> romanization only
-    
+    - "hello"                       -> english only
+    - "hello\\t你好\\tnei5 hou2"   -> tab-delimited
+    - "hello | 你好 | nei5 hou2"   -> pipe-delimited
+    - "hello 你好 nei5 hou2"       -> space-separated mixed content
+    - "你好"                        -> chinese only
+    - "nei5 hou2"                   -> romanization only
+
     Args:
         line: A single line of input text
-        
+
     Returns:
         ParsedEntry with separated english, cantonese, and jyutping fields
     """
     line = line.strip()
     if not line:
         return ParsedEntry(english="")
-    
+
     # First, try delimiter-based splitting
     parts = _split_by_delimiter(line)
-    if parts and len(parts) >= 2:
-        # Classify each part
+    if len(parts) >= 2:
         entry = ParsedEntry(english="")
         for part in parts:
             classification = _classify_segment(part)
@@ -235,31 +294,29 @@ def parse_line(line: str) -> ParsedEntry:
             elif classification == 'romanization' and not entry.jyutping:
                 entry.jyutping = part
             elif not entry.english:
-                # If we can't classify, put it in english as fallback
                 entry.english = part
             elif not entry.cantonese:
                 entry.cantonese = part
             elif not entry.jyutping:
                 entry.jyutping = part
         return entry
-    
+
     # No delimiter found — try to separate by language detection
-    # Check if the line contains CJK characters
     if _contains_cjk(line):
         english = _extract_english_segment(line)
         cantonese = _extract_cjk_segment(line)
         jyutping = _extract_romanization_segment(line)
-        
+
         return ParsedEntry(
             english=english,
             cantonese=cantonese,
             jyutping=jyutping
         )
-    
+
     # Check if the entire line is romanization
     if _is_romanization_sequence(line):
         return ParsedEntry(english="", jyutping=line.strip())
-    
+
     # Default: treat as English term
     return ParsedEntry(english=line.strip())
 
@@ -267,76 +324,62 @@ def parse_line(line: str) -> ParsedEntry:
 def parse_input(input_text: str) -> List[str]:
     """
     Parse multi-line input text into a list of English terms.
-    
+
     This is the legacy interface that returns only English terms.
     For full parsing with column separation, use parse_input_full().
-    
+
     Splits input by newlines, filters out empty lines, and trims whitespace
     from each term.
-    
+
     Args:
         input_text: Multi-line string containing English terms
-        
+
     Returns:
         List of non-empty English terms with whitespace trimmed
-        
+
     Examples:
         >>> parse_input("hello\\nworld")
         ['hello', 'world']
-        
+
         >>> parse_input("  hello  \\n\\n  world  \\n")
         ['hello', 'world']
-        
+
         >>> parse_input("\\n\\n")
         []
     """
-    # Split input by newlines
     lines = input_text.split('\n')
-    
-    # Filter out empty lines and trim whitespace
     terms = [line.strip() for line in lines if line.strip()]
-    
     return terms
 
 
 def parse_input_full(input_text: str) -> List[ParsedEntry]:
     """
     Parse multi-line input text into structured vocabulary entries.
-    
+
     Each line is analyzed to separate English terms, Chinese characters,
     and pinyin/jyutping romanization into their respective fields.
-    
+
     Supports various input formats:
     - One English term per line (will need translation)
-    - Tab/pipe/semicolon-delimited columns
+    - Tab or pipe-delimited columns (any column order)
     - Mixed content with English, Chinese, and romanization
-    
+
     Args:
         input_text: Multi-line string containing vocabulary data
-        
+
     Returns:
         List of ParsedEntry objects with separated language components
-        
-    Examples:
-        >>> entries = parse_input_full("hello\\tä½ å¥½\\tnei5 hou2")
-        >>> entries[0].english
-        'hello'
-        >>> entries[0].cantonese
-        'ä½ å¥½'
-        >>> entries[0].jyutping
-        'nei5 hou2'
     """
     lines = input_text.split('\n')
     entries = []
-    
+
     for line in lines:
         line = line.strip()
         if not line:
             continue
-        
+
         entry = parse_line(line)
-        # Only include entries that have at least some content
         if entry.english or entry.cantonese or entry.jyutping:
             entries.append(entry)
-    
+
     return entries
