@@ -28,7 +28,7 @@ def main():
     # to prevent exposing the interactive debugger to the network
     debug_mode = os.environ.get('FLASK_DEBUG', 'True').lower() == 'true'
     host = '127.0.0.1' if debug_mode else '0.0.0.0'
-    port = int(os.environ.get('FLASK_PORT', '3000'))
+    port = int(os.environ.get('FLASK_PORT', '3939'))
     
     url = f"http://localhost:{port}"
     

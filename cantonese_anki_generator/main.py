@@ -1142,7 +1142,7 @@ Validation Options:
 Web Interface:
   For manual audio alignment with visual waveform editing, use the web interface:
   python -m cantonese_anki_generator.web.run
-  Then open your browser to http://localhost:3000
+  Then open your browser to http://localhost:3939
         """
     )
     
@@ -1270,7 +1270,7 @@ Web Interface:
             if creator.create_shortcut():
                 print("✅ Desktop shortcut created successfully!")
                 print("Double-click the shortcut to launch the web interface.")
-                print("Your browser will open to http://localhost:3000")
+                print("Your browser will open to http://localhost:3939")
                 return 0
             else:
                 print("❌ Failed to create desktop shortcut.")

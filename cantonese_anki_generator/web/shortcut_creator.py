@@ -235,7 +235,7 @@ def main():
     if creator.create_shortcut(args.name):
         print("✅ Desktop shortcut created successfully!")
         print("Double-click the shortcut to launch the web interface.")
-        print("Your browser will need to navigate to http://localhost:3000")
+        print("Your browser will need to navigate to http://localhost:3939")
     else:
         print("❌ Failed to create desktop shortcut.")
         print("You can still launch the web interface using:")
