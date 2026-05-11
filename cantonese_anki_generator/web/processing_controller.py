@@ -1048,6 +1048,15 @@ class ProcessingController:
                     term.confidence_score = 0.0
                     term.is_manually_adjusted = False
 
+                    # Delete any stale WAV file so the old audio is not served
+                    stale_path = self.audio_extractor.temp_dir / session_id / f"{term.term_id}.wav"
+                    if stale_path.exists():
+                        try:
+                            stale_path.unlink()
+                            logger.info(f"Deleted stale segment file for unaligned term '{term.english}': {stale_path}")
+                        except Exception as del_err:
+                            logger.warning(f"Could not delete stale segment for term '{term.english}': {del_err}")
+
                 updated_terms.append(term)
 
             # Persist updated session
