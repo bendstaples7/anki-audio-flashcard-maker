@@ -2848,25 +2848,25 @@ function setupRegionDragHandlersForTrim(termId, regionsPlugin) {
     let lastKnownStart = null;
     let lastKnownEnd = null;
 
-    // Reset interaction flag when playback finishes or is paused, so that
-    // the cursor-reset WaveSurfer does internally after playback doesn't get
-    // mistaken for a user drag and corrupt the drag state.
+    // Use a flag on the waveform instance to suppress region-updated events that
+    // fire as a side-effect of playback (cursor movement, seekTo after finish, etc.).
+    // We set this flag in playTermAudio before play and clear it after finish/pause.
     const waveformDataForPlayback = getTermWaveform(termId);
     if (waveformDataForPlayback) {
         waveformDataForPlayback.instance.on('finish', () => {
-            userIsInteracting = false;
-            // Re-sync lastKnown values so the next real drag is detected correctly
+            waveformDataForPlayback.instance._playbackInProgress = false;
+            // Re-sync lastKnown so the next real drag starts from the correct baseline
             const regions = regionsPlugin.getRegions();
             const r = regions.find(r => r.id === `region-${termId}`);
             if (r) {
                 lastKnownStart = r.start;
                 lastKnownEnd = r.end;
             }
-            console.log(`[PLAYBACK] finish event - reset userIsInteracting for term: ${termId}`);
+            console.log(`[PLAYBACK] finish - cleared _playbackInProgress for term: ${termId}`);
         });
         waveformDataForPlayback.instance.on('pause', () => {
+            waveformDataForPlayback.instance._playbackInProgress = false;
             if (!userIsInteracting) {
-                // Re-sync after a programmatic pause (e.g. stopTermAudio seekTo)
                 const regions = regionsPlugin.getRegions();
                 const r = regions.find(r => r.id === `region-${termId}`);
                 if (r) {
@@ -2896,15 +2896,19 @@ function setupRegionDragHandlersForTrim(termId, regionsPlugin) {
     regionsPlugin.on('region-updated', (region) => {
         console.log(`[EVENT-FIRED] 'region-updated' event fired for region: ${region.id}, userIsInteracting: ${userIsInteracting}`);
         if (region.id === `region-${termId}`) {
-            // Only treat as a user interaction if the flag was explicitly set by
-            // region-update-start.  Do NOT infer interaction from boundary changes
-            // alone — WaveSurfer can fire region-updated programmatically (e.g.
-            // after playback cursor reset) with the same or slightly different
-            // values, which would corrupt lastKnownStart/End and break the next
-            // real drag.
+            // Ignore region-updated events that fire as a side-effect of playback
+            // (WaveSurfer moves the cursor during play which can nudge region state).
+            const waveformData = getTermWaveform(termId);
+            if (waveformData && waveformData.instance._playbackInProgress) {
+                console.log(`[EVENT-FIRED] Suppressing region-updated during playback for term: ${termId}`);
+                return;
+            }
+
             const boundariesChanged = lastKnownStart !== region.start || lastKnownEnd !== region.end;
             
-            if (boundariesChanged && userIsInteracting) {
+            if (boundariesChanged) {
+                // Boundaries changed — treat as user interaction (drag or resize)
+                userIsInteracting = true;
                 lastKnownStart = region.start;
                 lastKnownEnd = region.end;
                 
@@ -3484,6 +3488,7 @@ function playTermAudio(termId) {
     } else {
         // Start playback
         wavesurfer.play();
+        wavesurfer._playbackInProgress = true;  // Suppress spurious region-updated events during playback
         updatePlaybackState(termId, 'playing');
         
         // Remove any previously registered one-shot listeners before adding new ones
@@ -3574,6 +3579,7 @@ function stopTermAudio(termId) {
     // Stop playback if playing
     if (wavesurfer.isPlaying()) {
         wavesurfer.pause();
+        wavesurfer._playbackInProgress = false;
         wavesurfer.seekTo(0); // Reset to beginning
     }
     

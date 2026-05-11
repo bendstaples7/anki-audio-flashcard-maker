@@ -1031,3 +1031,7 @@ class ProcessingController:
             logger.info(f"VAD MODE: Regeneration complete for {len(updated_terms)} terms")
 
             return updated_terms
+
+        except Exception as e:
+            logger.error(f"VAD MODE: Regeneration failed: {e}")
+            raise
