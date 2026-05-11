@@ -2847,7 +2847,36 @@ function setupRegionDragHandlersForTrim(termId, regionsPlugin) {
     let userIsInteracting = false;
     let lastKnownStart = null;
     let lastKnownEnd = null;
-    
+
+    // Reset interaction flag when playback finishes or is paused, so that
+    // the cursor-reset WaveSurfer does internally after playback doesn't get
+    // mistaken for a user drag and corrupt the drag state.
+    const waveformDataForPlayback = getTermWaveform(termId);
+    if (waveformDataForPlayback) {
+        waveformDataForPlayback.instance.on('finish', () => {
+            userIsInteracting = false;
+            // Re-sync lastKnown values so the next real drag is detected correctly
+            const regions = regionsPlugin.getRegions();
+            const r = regions.find(r => r.id === `region-${termId}`);
+            if (r) {
+                lastKnownStart = r.start;
+                lastKnownEnd = r.end;
+            }
+            console.log(`[PLAYBACK] finish event - reset userIsInteracting for term: ${termId}`);
+        });
+        waveformDataForPlayback.instance.on('pause', () => {
+            if (!userIsInteracting) {
+                // Re-sync after a programmatic pause (e.g. stopTermAudio seekTo)
+                const regions = regionsPlugin.getRegions();
+                const r = regions.find(r => r.id === `region-${termId}`);
+                if (r) {
+                    lastKnownStart = r.start;
+                    lastKnownEnd = r.end;
+                }
+            }
+        });
+    }
+
     // Task 5.2: Add event listener verification
     // Log when each event listener is attached
     console.log(`[EVENT-LISTENER] Attaching 'region-update-start' event listener for term: ${termId}`);
@@ -2867,12 +2896,15 @@ function setupRegionDragHandlersForTrim(termId, regionsPlugin) {
     regionsPlugin.on('region-updated', (region) => {
         console.log(`[EVENT-FIRED] 'region-updated' event fired for region: ${region.id}, userIsInteracting: ${userIsInteracting}`);
         if (region.id === `region-${termId}`) {
-            // Check if boundaries actually changed (to detect user interaction even if region-update-start didn't fire)
+            // Only treat as a user interaction if the flag was explicitly set by
+            // region-update-start.  Do NOT infer interaction from boundary changes
+            // alone — WaveSurfer can fire region-updated programmatically (e.g.
+            // after playback cursor reset) with the same or slightly different
+            // values, which would corrupt lastKnownStart/End and break the next
+            // real drag.
             const boundariesChanged = lastKnownStart !== region.start || lastKnownEnd !== region.end;
             
-            if (boundariesChanged) {
-                // Boundaries changed - this is a user interaction (resize or drag)
-                userIsInteracting = true;
+            if (boundariesChanged && userIsInteracting) {
                 lastKnownStart = region.start;
                 lastKnownEnd = region.end;
                 
@@ -3453,6 +3485,11 @@ function playTermAudio(termId) {
         // Start playback
         wavesurfer.play();
         updatePlaybackState(termId, 'playing');
+        
+        // Remove any previously registered one-shot listeners before adding new ones
+        // to prevent them stacking up across multiple play/pause cycles.
+        wavesurfer.un('finish');
+        wavesurfer.un('error');
         
         // Set up event listeners for playback state changes
         
