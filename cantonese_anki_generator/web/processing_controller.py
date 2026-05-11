@@ -993,6 +993,13 @@ class ProcessingController:
 
             logger.info(f"VAD produced {len(time_ranges)} segments for {num_terms} terms")
 
+            # Guard: if VAD returned nothing at all, fail fast with a clear message
+            if len(time_ranges) == 0:
+                raise ValueError(
+                    f"segment_audio_with_vad returned no ranges for {num_terms} terms — "
+                    "the audio slice may be silent or too short"
+                )
+
             updated_terms = []
 
             for i, term in enumerate(terms_to_regenerate):
@@ -1003,25 +1010,43 @@ class ProcessingController:
                         f'Assigning segment {i+1}/{num_terms}: "{term.english}"'
                     )
 
-                # Use the corresponding VAD range (or last one if we run out)
-                rel_start, rel_end = time_ranges[i] if i < len(time_ranges) else time_ranges[-1]
+                if i < len(time_ranges):
+                    rel_start, rel_end = time_ranges[i]
+                    abs_start = start_from_time + rel_start
+                    abs_end = start_from_time + rel_end
 
-                # Convert relative times back to absolute times in the full audio
-                term.start_time = start_from_time + rel_start
-                term.end_time = start_from_time + rel_end
-                term.confidence_score = 0.9  # VAD detections are high-confidence
-                term.is_manually_adjusted = False
+                    # Update boundaries and reset baseline so Reset restores to
+                    # the newly generated automatic timings (not the old ones)
+                    term.start_time = abs_start
+                    term.end_time = abs_end
+                    term.original_start = abs_start
+                    term.original_end = abs_end
+                    term.confidence_score = 0.9  # VAD detections are high-confidence
+                    term.is_manually_adjusted = False
 
-                duration = term.end_time - term.start_time
-                logger.info(
-                    f"Term {i+1} '{term.english}': {term.start_time:.2f}s - {term.end_time:.2f}s "
-                    f"(duration: {duration:.2f}s)"
-                )
+                    duration = abs_end - abs_start
+                    logger.info(
+                        f"Term {i+1} '{term.english}': {abs_start:.2f}s - {abs_end:.2f}s "
+                        f"(duration: {duration:.2f}s)"
+                    )
 
-                # Regenerate audio segment file
-                self.audio_extractor.update_term_segment(
-                    session_id, term, audio_data, sample_rate
-                )
+                    # Regenerate audio segment file
+                    self.audio_extractor.update_term_segment(
+                        session_id, term, audio_data, sample_rate
+                    )
+                else:
+                    # VAD produced fewer segments than terms — mark remaining as missing
+                    logger.warning(
+                        f"Term {i+1} '{term.english}': no VAD range available "
+                        f"(time_ranges has {len(time_ranges)} entries for {num_terms} terms) — "
+                        "marking as unaligned"
+                    )
+                    term.start_time = 0.0
+                    term.end_time = 0.0
+                    term.original_start = 0.0
+                    term.original_end = 0.0
+                    term.confidence_score = 0.0
+                    term.is_manually_adjusted = False
 
                 updated_terms.append(term)
 

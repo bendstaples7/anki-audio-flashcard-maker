@@ -3491,27 +3491,38 @@ function playTermAudio(termId) {
         wavesurfer._playbackInProgress = true;  // Suppress spurious region-updated events during playback
         updatePlaybackState(termId, 'playing');
         
-        // Remove any previously registered one-shot listeners before adding new ones
-        // to prevent them stacking up across multiple play/pause cycles.
-        wavesurfer.un('finish');
-        wavesurfer.un('error');
+        // Remove only the previously registered play-scoped one-shot listeners,
+        // leaving the persistent trim-reset listener (registered by
+        // setupRegionDragHandlersForTrim) intact.
+        if (wavesurfer._playFinishHandler) {
+            wavesurfer.un('finish', wavesurfer._playFinishHandler);
+        }
+        if (wavesurfer._playErrorHandler) {
+            wavesurfer.un('error', wavesurfer._playErrorHandler);
+        }
         
         // Set up event listeners for playback state changes
         
         // When playback completes, return to ready state (Requirement 3.4)
-        wavesurfer.once('finish', () => {
+        wavesurfer._playFinishHandler = () => {
+            wavesurfer._playbackInProgress = false;
             updatePlaybackState(termId, 'ready');
             AppState.currentlyPlaying = null;
+            wavesurfer._playFinishHandler = null;
             console.log(`Playback completed for term ${termId}`);
-        });
+        };
+        wavesurfer.once('finish', wavesurfer._playFinishHandler);
         
         // Handle playback errors
-        wavesurfer.once('error', (error) => {
+        wavesurfer._playErrorHandler = (error) => {
+            wavesurfer._playbackInProgress = false;
             console.error(`Playback error for term ${termId}:`, error);
             updatePlaybackState(termId, 'ready');
             AppState.currentlyPlaying = null;
+            wavesurfer._playErrorHandler = null;
             showError(`Failed to play audio for term ${termId}`);
-        });
+        };
+        wavesurfer.once('error', wavesurfer._playErrorHandler);
     }
 }
 
