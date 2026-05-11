@@ -2847,7 +2847,36 @@ function setupRegionDragHandlersForTrim(termId, regionsPlugin) {
     let userIsInteracting = false;
     let lastKnownStart = null;
     let lastKnownEnd = null;
-    
+
+    // Use a flag on the waveform instance to suppress region-updated events that
+    // fire as a side-effect of playback (cursor movement, seekTo after finish, etc.).
+    // We set this flag in playTermAudio before play and clear it after finish/pause.
+    const waveformDataForPlayback = getTermWaveform(termId);
+    if (waveformDataForPlayback) {
+        waveformDataForPlayback.instance.on('finish', () => {
+            waveformDataForPlayback.instance._playbackInProgress = false;
+            // Re-sync lastKnown so the next real drag starts from the correct baseline
+            const regions = regionsPlugin.getRegions();
+            const r = regions.find(r => r.id === `region-${termId}`);
+            if (r) {
+                lastKnownStart = r.start;
+                lastKnownEnd = r.end;
+            }
+            console.log(`[PLAYBACK] finish - cleared _playbackInProgress for term: ${termId}`);
+        });
+        waveformDataForPlayback.instance.on('pause', () => {
+            waveformDataForPlayback.instance._playbackInProgress = false;
+            if (!userIsInteracting) {
+                const regions = regionsPlugin.getRegions();
+                const r = regions.find(r => r.id === `region-${termId}`);
+                if (r) {
+                    lastKnownStart = r.start;
+                    lastKnownEnd = r.end;
+                }
+            }
+        });
+    }
+
     // Task 5.2: Add event listener verification
     // Log when each event listener is attached
     console.log(`[EVENT-LISTENER] Attaching 'region-update-start' event listener for term: ${termId}`);
@@ -2867,11 +2896,18 @@ function setupRegionDragHandlersForTrim(termId, regionsPlugin) {
     regionsPlugin.on('region-updated', (region) => {
         console.log(`[EVENT-FIRED] 'region-updated' event fired for region: ${region.id}, userIsInteracting: ${userIsInteracting}`);
         if (region.id === `region-${termId}`) {
-            // Check if boundaries actually changed (to detect user interaction even if region-update-start didn't fire)
+            // Ignore region-updated events that fire as a side-effect of playback
+            // (WaveSurfer moves the cursor during play which can nudge region state).
+            const waveformData = getTermWaveform(termId);
+            if (waveformData && waveformData.instance._playbackInProgress) {
+                console.log(`[EVENT-FIRED] Suppressing region-updated during playback for term: ${termId}`);
+                return;
+            }
+
             const boundariesChanged = lastKnownStart !== region.start || lastKnownEnd !== region.end;
             
             if (boundariesChanged) {
-                // Boundaries changed - this is a user interaction (resize or drag)
+                // Boundaries changed — treat as user interaction (drag or resize)
                 userIsInteracting = true;
                 lastKnownStart = region.start;
                 lastKnownEnd = region.end;
@@ -3452,24 +3488,41 @@ function playTermAudio(termId) {
     } else {
         // Start playback
         wavesurfer.play();
+        wavesurfer._playbackInProgress = true;  // Suppress spurious region-updated events during playback
         updatePlaybackState(termId, 'playing');
+        
+        // Remove only the previously registered play-scoped one-shot listeners,
+        // leaving the persistent trim-reset listener (registered by
+        // setupRegionDragHandlersForTrim) intact.
+        if (wavesurfer._playFinishHandler) {
+            wavesurfer.un('finish', wavesurfer._playFinishHandler);
+        }
+        if (wavesurfer._playErrorHandler) {
+            wavesurfer.un('error', wavesurfer._playErrorHandler);
+        }
         
         // Set up event listeners for playback state changes
         
         // When playback completes, return to ready state (Requirement 3.4)
-        wavesurfer.once('finish', () => {
+        wavesurfer._playFinishHandler = () => {
+            wavesurfer._playbackInProgress = false;
             updatePlaybackState(termId, 'ready');
             AppState.currentlyPlaying = null;
+            wavesurfer._playFinishHandler = null;
             console.log(`Playback completed for term ${termId}`);
-        });
+        };
+        wavesurfer.once('finish', wavesurfer._playFinishHandler);
         
         // Handle playback errors
-        wavesurfer.once('error', (error) => {
+        wavesurfer._playErrorHandler = (error) => {
+            wavesurfer._playbackInProgress = false;
             console.error(`Playback error for term ${termId}:`, error);
             updatePlaybackState(termId, 'ready');
             AppState.currentlyPlaying = null;
+            wavesurfer._playErrorHandler = null;
             showError(`Failed to play audio for term ${termId}`);
-        });
+        };
+        wavesurfer.once('error', wavesurfer._playErrorHandler);
     }
 }
 
@@ -3537,6 +3590,7 @@ function stopTermAudio(termId) {
     // Stop playback if playing
     if (wavesurfer.isPlaying()) {
         wavesurfer.pause();
+        wavesurfer._playbackInProgress = false;
         wavesurfer.seekTo(0); // Reset to beginning
     }
     

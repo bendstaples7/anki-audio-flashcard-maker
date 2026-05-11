@@ -922,21 +922,22 @@ class ProcessingController:
         audio_data: np.ndarray, sample_rate: int
     ) -> List[TermAlignment]:
         """
-        Regenerate alignment for terms using fast smart segmentation only.
-        
-        FAST MODE: Skips Whisper verification, just uses smart boundary detection.
-        This is much faster and works well when you've manually trimmed the previous term.
-        
+        Regenerate alignment for terms using Silero VAD — the same algorithm
+        used during initial processing.
+
+        Slices the audio from start_from_time to the end and runs VAD on that
+        slice, so the results are consistent with the initial alignment quality.
+
         Args:
             session_id: Session identifier
             start_term_id: Term identifier to start from
             start_from_time: Time to start alignment from (end of previous term)
             audio_data: Full audio data array
             sample_rate: Audio sample rate
-            
+
         Returns:
             List of updated TermAlignment objects
-            
+
         Raises:
             ValueError: If session or term not found
         """
@@ -959,7 +960,7 @@ class ProcessingController:
         terms_to_regenerate = session.terms[start_index:]
         num_terms = len(terms_to_regenerate)
         
-        logger.info(f"FAST MODE: Regenerating {num_terms} terms starting from '{terms_to_regenerate[0].english}' at {start_from_time:.2f}s")
+        logger.info(f"VAD MODE: Regenerating {num_terms} terms starting from '{terms_to_regenerate[0].english}' at {start_from_time:.2f}s")
         
         # Report progress
         if self.regeneration_progress_callback:
@@ -975,76 +976,96 @@ class ProcessingController:
         
         logger.info(f"Remaining audio duration: {remaining_duration:.2f}s for {num_terms} terms")
         
-        # Calculate expected average duration per term
-        avg_duration = remaining_duration / num_terms
-        logger.info(f"Average duration per term: {avg_duration:.2f}s")
-        
-        # Adjust boundary detector parameters for longer segments
-        original_min_duration = self.boundary_detector.min_segment_duration
-        original_max_duration = self.boundary_detector.max_segment_duration
-        
-        # Set more reasonable durations based on remaining audio
-        self.boundary_detector.min_segment_duration = max(0.5, avg_duration * 0.5)  # At least 0.5s, or half average
-        self.boundary_detector.max_segment_duration = max(5.0, avg_duration * 2.0)  # At least 5s, or double average
-        
-        logger.info(f"Adjusted segment durations: min={self.boundary_detector.min_segment_duration:.2f}s, max={self.boundary_detector.max_segment_duration:.2f}s")
-        
         try:
-            # Segment the remaining audio using smart boundary detection
-            # This is fast and doesn't require Whisper
-            segments = self.boundary_detector.segment_audio(
-                remaining_audio, expected_count=num_terms, start_offset=0.0
+            # Segment the remaining audio using the same Silero VAD used during
+            # initial processing.  This is more accurate than SmartBoundaryDetector
+            # because it detects actual speech bursts rather than relying on
+            # energy-envelope heuristics.
+            from cantonese_anki_generator.audio.vad_segmentation import segment_audio_with_vad
+
+            logger.info(f"VAD MODE: Running Silero VAD on {remaining_duration:.2f}s of audio for {num_terms} terms")
+
+            # segment_audio_with_vad returns times relative to the slice we pass in,
+            # so we add start_from_time back when storing on each term.
+            time_ranges = segment_audio_with_vad(
+                remaining_audio, sample_rate, expected_count=num_terms
             )
-            
-            logger.info(f"Created {len(segments)} audio segments for {num_terms} terms")
-            
-            # Validate that we got segments
-            if not segments:
-                raise ValueError(f"Failed to create audio segments for {num_terms} terms. Audio may be too short or silent.")
-            
-            # Log segment durations for debugging
-            for i, seg in enumerate(segments):
-                duration = seg.end_time - seg.start_time
-                logger.info(f"  Segment {i}: {seg.start_time:.2f}s - {seg.end_time:.2f}s (duration: {duration:.2f}s)")
-            
-            # Assign segments to terms sequentially (no Whisper verification)
+
+            logger.info(f"VAD produced {len(time_ranges)} segments for {num_terms} terms")
+
+            # Guard: if VAD returned nothing at all, fail fast with a clear message
+            if len(time_ranges) == 0:
+                raise ValueError(
+                    f"segment_audio_with_vad returned no ranges for {num_terms} terms — "
+                    "the audio slice may be silent or too short"
+                )
+
             updated_terms = []
-            
+
             for i, term in enumerate(terms_to_regenerate):
                 # Report progress
                 if self.regeneration_progress_callback:
                     self.regeneration_progress_callback(
-                        i, num_terms, 
+                        i, num_terms,
                         f'Assigning segment {i+1}/{num_terms}: "{term.english}"'
                     )
-                
-                # Use the corresponding segment (or last segment if we run out)
-                segment = segments[i] if i < len(segments) else segments[-1]
-                
-                # Update term with segment boundaries
-                term.start_time = start_from_time + segment.start_time
-                term.end_time = start_from_time + segment.end_time
-                term.confidence_score = segment.confidence  # Use boundary detector's confidence
-                term.is_manually_adjusted = False
-                
-                duration = term.end_time - term.start_time
-                logger.info(f"Term {i+1} '{term.english}': {term.start_time:.2f}s - {term.end_time:.2f}s (duration: {duration:.2f}s, confidence: {term.confidence_score:.2f})")
-                
-                # Regenerate audio segment
-                self.audio_extractor.update_term_segment(
-                    session_id, term, audio_data, sample_rate
-                )
-                
+
+                if i < len(time_ranges):
+                    rel_start, rel_end = time_ranges[i]
+                    abs_start = start_from_time + rel_start
+                    abs_end = start_from_time + rel_end
+
+                    # Update boundaries and reset baseline so Reset restores to
+                    # the newly generated automatic timings (not the old ones)
+                    term.start_time = abs_start
+                    term.end_time = abs_end
+                    term.original_start = abs_start
+                    term.original_end = abs_end
+                    term.confidence_score = 0.9  # VAD detections are high-confidence
+                    term.is_manually_adjusted = False
+
+                    duration = abs_end - abs_start
+                    logger.info(
+                        f"Term {i+1} '{term.english}': {abs_start:.2f}s - {abs_end:.2f}s "
+                        f"(duration: {duration:.2f}s)"
+                    )
+
+                    # Regenerate audio segment file
+                    self.audio_extractor.update_term_segment(
+                        session_id, term, audio_data, sample_rate
+                    )
+                else:
+                    # VAD produced fewer segments than terms — mark remaining as missing
+                    logger.warning(
+                        f"Term {i+1} '{term.english}': no VAD range available "
+                        f"(time_ranges has {len(time_ranges)} entries for {num_terms} terms) — "
+                        "marking as unaligned"
+                    )
+                    term.start_time = 0.0
+                    term.end_time = 0.0
+                    term.original_start = 0.0
+                    term.original_end = 0.0
+                    term.confidence_score = 0.0
+                    term.is_manually_adjusted = False
+
+                    # Delete any stale WAV file so the old audio is not served
+                    stale_path = self.audio_extractor.temp_dir / session_id / f"{term.term_id}.wav"
+                    if stale_path.exists():
+                        try:
+                            stale_path.unlink()
+                            logger.info(f"Deleted stale segment file for unaligned term '{term.english}': {stale_path}")
+                        except Exception as del_err:
+                            logger.warning(f"Could not delete stale segment for term '{term.english}': {del_err}")
+
                 updated_terms.append(term)
-            
-            # Update session
+
+            # Persist updated session
             self.session_manager._save_session(session)
-            
-            logger.info(f"FAST MODE: Regeneration complete for {len(updated_terms)} terms")
-            
+
+            logger.info(f"VAD MODE: Regeneration complete for {len(updated_terms)} terms")
+
             return updated_terms
-            
-        finally:
-            # Restore original parameters
-            self.boundary_detector.min_segment_duration = original_min_duration
-            self.boundary_detector.max_segment_duration = original_max_duration
+
+        except Exception as e:
+            logger.error(f"VAD MODE: Regeneration failed: {e}")
+            raise
