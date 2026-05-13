@@ -42,6 +42,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Original model IDs used by the tool before bidirectional support
+LEGACY_MODEL_ID = 1607392319   # 4 fields: English, Cantonese, Audio, Tags
+JYUTPING_MODEL_ID = 1607392320  # 5 fields: English, Cantonese, Jyutping, Audio, Tags
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -53,12 +57,13 @@ def unpack_apkg(apkg_path: Path, dest_dir: Path) -> None:
         zf.extractall(dest_dir)
 
 
-def read_notes_from_db(db_path: Path) -> list[dict]:
+def read_notes_from_db(db_path: Path) -> tuple[list[dict], int]:
     """
     Read all notes from an Anki SQLite collection.
 
-    Returns a list of dicts with keys:
-        id, guid, mid, flds (list of field strings), tags, sfld
+    Returns a tuple of:
+      - list of dicts with keys: id, guid, mid, flds (list), tags, sfld
+      - the original model ID (mid) used by the notes
     """
     conn = sqlite3.connect(db_path)
     try:
@@ -66,8 +71,10 @@ def read_notes_from_db(db_path: Path) -> list[dict]:
             "SELECT id, guid, mid, flds, tags, sfld FROM notes"
         )
         notes = []
+        model_ids = set()
         for row in cursor:
             note_id, guid, mid, flds_raw, tags, sfld = row
+            model_ids.add(mid)
             notes.append(
                 {
                     "id": note_id,
@@ -78,7 +85,8 @@ def read_notes_from_db(db_path: Path) -> list[dict]:
                     "sfld": sfld,
                 }
             )
-        return notes
+        original_mid = model_ids.pop() if model_ids else 0
+        return notes, original_mid
     finally:
         conn.close()
 
@@ -104,21 +112,23 @@ def build_bidirectional_package(
     media_dir: Path,
     media_map: dict[str, str],
     deck_name: str,
+    original_mid: int,
 ) -> genanki.Package:
     """
     Build a new genanki Package with the bidirectional model.
 
-    Args:
-        notes:      Notes read from the original collection DB.
-        media_dir:  Directory containing the unpacked media files (named by
-                    their numeric archive keys).
-        media_map:  Mapping of filename → archive key.
-        deck_name:  Name for the new deck.
-
-    Returns:
-        A genanki.Package ready to be written to disk.
+    Selects the correct model based on the original model ID:
+    - LEGACY_MODEL_ID (1607392319): 4-field notes → use create_model_no_jyutping()
+    - JYUTPING_MODEL_ID (1607392320): 5-field notes → use create_model()
     """
-    model = CantoneseCardTemplate.create_model()
+    if original_mid == LEGACY_MODEL_ID:
+        model = CantoneseCardTemplate.create_model_no_jyutping()
+        num_fields = 4
+        logger.info(f"  Using legacy 4-field bidirectional model (original mid={original_mid})")
+    else:
+        model = CantoneseCardTemplate.create_model()
+        num_fields = 5
+        logger.info(f"  Using 5-field bidirectional model (original mid={original_mid})")
 
     # Use a stable deck ID derived from the deck name so re-imports merge
     # into the same deck rather than creating duplicates.
@@ -132,12 +142,14 @@ def build_bidirectional_package(
     for raw_note in notes:
         flds = raw_note["flds"]
 
-        # The original model has 5 fields: English, Cantonese, Jyutping, Audio, Tags
         # Pad with empty strings if somehow fewer fields exist.
-        while len(flds) < 5:
+        while len(flds) < num_fields:
             flds.append("")
 
-        english, cantonese, jyutping, audio_field, tags_field = flds[:5]
+        flds = flds[:num_fields]
+
+        english = flds[0]
+        cantonese = flds[1]
 
         if not english.strip() or not cantonese.strip():
             logger.warning(f"Skipping note with empty English or Cantonese: {flds}")
@@ -146,15 +158,16 @@ def build_bidirectional_package(
 
         note = genanki.Note(
             model=model,
-            fields=[english, cantonese, jyutping, audio_field, tags_field],
+            fields=flds,
             # Preserve the original GUID so Anki recognises these as the same
             # notes and updates them in-place rather than creating duplicates.
             guid=raw_note["guid"],
         )
         deck.add_note(note)
 
-        # Collect the actual audio file path if it exists in the unpacked dir
-        # audio_field looks like "[sound:hello_001.wav]"
+        # Collect the actual audio file — it's in the last field before Tags
+        # For 4-field: flds[2] is Audio. For 5-field: flds[3] is Audio.
+        audio_field = flds[2] if num_fields == 4 else flds[3]
         if audio_field.startswith("[sound:") and audio_field.endswith("]"):
             filename = audio_field[7:-1]
             archive_key = media_map.get(filename)
@@ -202,7 +215,7 @@ def convert_apkg(
             return False
 
         try:
-            notes = read_notes_from_db(db_path)
+            notes, original_mid = read_notes_from_db(db_path)
         except Exception as e:
             logger.error(f"  Failed to read notes from {src.name}: {e}")
             return False
@@ -212,14 +225,14 @@ def convert_apkg(
         # Derive a clean deck name from the filename
         deck_name = src.stem.replace("_", " ").replace("-", " ").title()
 
-        logger.info(f"  Found {len(notes)} notes → building bidirectional package")
+        logger.info(f"  Found {len(notes)} notes (model {original_mid}) → building bidirectional package")
 
         if dry_run:
             logger.info(f"  [dry-run] Would write: {dest}")
             return True
 
         try:
-            package = build_bidirectional_package(notes, tmp_dir, media_map, deck_name)
+            package = build_bidirectional_package(notes, tmp_dir, media_map, deck_name, original_mid)
             dest.parent.mkdir(parents=True, exist_ok=True)
             package.write_to_file(str(dest))
             size_kb = dest.stat().st_size // 1024
