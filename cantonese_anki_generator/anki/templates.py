@@ -16,14 +16,17 @@ logger = logging.getLogger(__name__)
 class CantoneseCardTemplate:
     """
     Anki card template for Cantonese vocabulary learning.
-    
-    Creates cards with:
-    - Front: English term
-    - Back: Cantonese term with audio playback
+
+    Creates two cards per note:
+    - Card 1 (English → Cantonese): Front shows English, back shows Cantonese + audio
+    - Card 2 (Cantonese → English): Front shows Cantonese + audio, back shows English
     """
-    
-    # Unique model ID for this card type (new ID for Jyutping-enabled model)
-    MODEL_ID = 1607392320
+
+    # Unique model ID for this card type.
+    # Bumped from 1607392320 → 1607392321 to introduce the bidirectional template.
+    # Anki identifies note types by model ID, so a new ID forces Anki to treat
+    # these notes as a different (updated) note type with two card templates.
+    MODEL_ID = 1607392321
     
     # CSS styling for the cards
     CSS = """
@@ -92,6 +95,8 @@ class CantoneseCardTemplate:
 }
 """
     
+    # ── Card 1: English → Cantonese ──────────────────────────────────────────
+
     # Front template (English)
     FRONT_TEMPLATE = """
 <div class="card">
@@ -100,29 +105,77 @@ class CantoneseCardTemplate:
     </div>
 </div>
 """
-    
+
     # Back template (Cantonese with Jyutping and audio)
     BACK_TEMPLATE = """
 <div class="card">
     <div class="front">
         {{English}}
     </div>
-    
+
     <hr>
-    
+
     <div class="back">
         {{Cantonese}}
     </div>
-    
+
     {{#Jyutping}}
     <div class="jyutping">
         {{Jyutping}}
     </div>
     {{/Jyutping}}
-    
+
     <div class="audio-section">
         <div class="audio-label">🔊 Pronunciation:</div>
         {{Audio}}
+    </div>
+</div>
+"""
+
+    # ── Card 2: Cantonese → English ───────────────────────────────────────────
+
+    # Front template (Cantonese with Jyutping and audio as the prompt)
+    REVERSE_FRONT_TEMPLATE = """
+<div class="card">
+    <div class="back">
+        {{Cantonese}}
+    </div>
+
+    {{#Jyutping}}
+    <div class="jyutping">
+        {{Jyutping}}
+    </div>
+    {{/Jyutping}}
+
+    <div class="audio-section">
+        <div class="audio-label">🔊 Pronunciation:</div>
+        {{Audio}}
+    </div>
+</div>
+"""
+
+    # Back template (reveals the English meaning)
+    REVERSE_BACK_TEMPLATE = """
+<div class="card">
+    <div class="back">
+        {{Cantonese}}
+    </div>
+
+    {{#Jyutping}}
+    <div class="jyutping">
+        {{Jyutping}}
+    </div>
+    {{/Jyutping}}
+
+    <div class="audio-section">
+        <div class="audio-label">🔊 Pronunciation:</div>
+        {{Audio}}
+    </div>
+
+    <hr>
+
+    <div class="front">
+        {{English}}
     </div>
 </div>
 """
@@ -130,13 +183,18 @@ class CantoneseCardTemplate:
     @classmethod
     def create_model(cls) -> genanki.Model:
         """
-        Create the Anki model (card template) for Cantonese vocabulary.
-        
+        Create the Anki model (note type) for Cantonese vocabulary.
+
+        The model contains two card templates so that every note automatically
+        produces two cards:
+          1. English → Cantonese  (with audio on the answer side)
+          2. Cantonese → English  (with audio on the question side)
+
         Returns:
             genanki.Model: Configured Anki model
         """
-        logger.info("Creating Cantonese card template model")
-        
+        logger.info("Creating bidirectional Cantonese card template model")
+
         model = genanki.Model(
             model_id=cls.MODEL_ID,
             name='Cantonese Vocabulary',
@@ -153,11 +211,16 @@ class CantoneseCardTemplate:
                     'qfmt': cls.FRONT_TEMPLATE,
                     'afmt': cls.BACK_TEMPLATE,
                 },
+                {
+                    'name': 'Cantonese → English',
+                    'qfmt': cls.REVERSE_FRONT_TEMPLATE,
+                    'afmt': cls.REVERSE_BACK_TEMPLATE,
+                },
             ],
             css=cls.CSS,
         )
-        
-        logger.info(f"Created model with ID {cls.MODEL_ID}")
+
+        logger.info(f"Created bidirectional model with ID {cls.MODEL_ID}")
         return model
 
 
