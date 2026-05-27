@@ -198,8 +198,8 @@ class CantoneseCardTemplate:
             name='Cantonese Vocabulary',
             fields=[
                 {'name': 'English'},
-                {'name': 'Cantonese'},
                 {'name': 'Jyutping'},
+                {'name': 'Cantonese'},
                 {'name': 'Audio'},
                 {'name': 'Tags'},
             ],
