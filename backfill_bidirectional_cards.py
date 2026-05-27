@@ -117,18 +117,28 @@ def build_bidirectional_package(
     """
     Build a new genanki Package with the bidirectional model.
 
-    Selects the correct model based on the original model ID:
-    - LEGACY_MODEL_ID (1607392319): 4-field notes → use create_model_no_jyutping()
-    - JYUTPING_MODEL_ID (1607392320): 5-field notes → use create_model()
+    Selects the correct model based on the original model ID (canonical mapping):
+    - LEGACY_MODEL_ID (1607392319)          → create_model_no_jyutping() → output mid=1607392322
+    - JYUTPING_MODEL_ID (1607392320)        → create_model()             → output mid=1607392321
+    - CantoneseCardTemplate.MODEL_ID (1607392321)           → create_model()             → output mid=1607392321 (unchanged)
+    - CantoneseCardTemplate.MODEL_ID_NO_JYUTPING (1607392322) → create_model_no_jyutping() → output mid=1607392322 (unchanged)
+    - Unknown model IDs fall through to the 5-field default with a warning.
     """
-    if original_mid == LEGACY_MODEL_ID:
+    FOUR_FIELD_MIDS = {LEGACY_MODEL_ID, CantoneseCardTemplate.MODEL_ID_NO_JYUTPING}
+    FIVE_FIELD_MIDS = {JYUTPING_MODEL_ID, CantoneseCardTemplate.MODEL_ID}
+
+    if original_mid in FOUR_FIELD_MIDS:
         model = CantoneseCardTemplate.create_model_no_jyutping()
         num_fields = 4
         logger.info(f"  Using legacy 4-field bidirectional model (original mid={original_mid})")
-    else:
+    elif original_mid in FIVE_FIELD_MIDS:
         model = CantoneseCardTemplate.create_model()
         num_fields = 5
         logger.info(f"  Using 5-field bidirectional model (original mid={original_mid})")
+    else:
+        logger.warning(f"  Unknown model ID {original_mid}; defaulting to 5-field model")
+        model = CantoneseCardTemplate.create_model()
+        num_fields = 5
 
     # Use a stable deck ID derived from the deck name so re-imports merge
     # into the same deck rather than creating duplicates.
@@ -174,7 +184,25 @@ def build_bidirectional_package(
             if archive_key is not None:
                 file_path = media_dir / archive_key
                 if file_path.exists():
-                    media_files.append(str(file_path))
+                    # Sanitize filename to prevent path traversal: keep only
+                    # the bare filename component and reject any path separators
+                    # or parent-directory references.
+                    safe_name = Path(filename).name
+                    if not safe_name or safe_name != filename or ".." in filename:
+                        logger.warning(
+                            f"Skipping unsafe media filename: {filename!r}"
+                        )
+                    else:
+                        named_path = media_dir / safe_name
+                        # Verify the resolved path stays inside media_dir
+                        if not named_path.resolve().is_relative_to(media_dir.resolve()):
+                            logger.warning(
+                                f"Skipping media file that would escape media_dir: {filename!r}"
+                            )
+                        else:
+                            if not named_path.exists():
+                                shutil.copy2(file_path, named_path)
+                            media_files.append(str(named_path))
                 else:
                     logger.warning(f"Media file not found in archive: {file_path}")
             else:
