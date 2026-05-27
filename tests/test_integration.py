@@ -183,9 +183,9 @@ def test_end_to_end_field_slots_and_model_id():
         for mid, flds_raw in rows:
             fields = flds_raw.split("\x1f")
 
-            # Must have at least 5 slots
-            assert len(fields) >= 5, (
-                f"Expected at least 5 fields, got {len(fields)}: {fields!r}"
+            # Must have exactly 5 slots
+            assert len(fields) == 5, (
+                f"Expected exactly 5 fields, got {len(fields)}: {fields!r}"
             )
 
             english_slot = fields[0]
@@ -310,12 +310,12 @@ def test_backfill_media_manifest_contains_named_wav():
         unpack_dir.mkdir()
 
         # Build the synthetic source .apkg:
-        #   - one 5-field note: [English, Cantonese, Jyutping, Audio, Tags]
+        #   - one 5-field note in canonical order: [English, Jyutping, Cantonese, Audio, Tags]
         #   - audio field: [sound:hello_001.wav]
         #   - media manifest: {"0": "hello_001.wav"}  (archive key "0" → filename)
         _make_synthetic_apkg_with_media(
             dest_path=src_apkg,
-            note_flds=["hello", "你好", "nei5 hou2", "[sound:hello_001.wav]", ""],
+            note_flds=["hello", "nei5 hou2", "你好", "[sound:hello_001.wav]", ""],
             note_mid=1607392321,
             media_manifest={"0": "hello_001.wav"},
         )

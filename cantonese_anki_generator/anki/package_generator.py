@@ -154,10 +154,11 @@ class AnkiPackageGenerator:
                     fields['Tags']
                 ]
             )
-            assert note.model.model_id == CantoneseCardTemplate.MODEL_ID, (
-                f"Model ID mismatch: expected {CantoneseCardTemplate.MODEL_ID}, "
-                f"got {note.model.model_id}"
-            )
+            if note.model.model_id != CantoneseCardTemplate.MODEL_ID:
+                raise ValueError(
+                    f"Model ID mismatch: expected {CantoneseCardTemplate.MODEL_ID}, "
+                    f"got {note.model.model_id}"
+                )
 
             logger.debug(f"Created note: {vocab.english} → {vocab.cantonese}")
             return note

@@ -396,8 +396,9 @@ def _deck_id_from_name(name: str) -> int:
     Replicate the deck ID derivation used in build_bidirectional_package().
 
     Uses hashlib.md5 of the name — deterministic, no timestamp component.
+    Non-cryptographic use: stable integer ID derivation only.
     """
-    return int(hashlib.md5(name.encode()).hexdigest()[:8], 16) % 2_147_483_647
+    return int(hashlib.md5(name.encode()).hexdigest()[:8], 16) % 2_147_483_647  # noqa: S324
 
 
 @pytest.mark.property

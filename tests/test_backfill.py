@@ -380,13 +380,15 @@ def test_dry_run_returns_true_and_no_output_file_created():
 
         result = convert_apkg(src, dest, dry_run=True)
 
-    assert result is True, (
-        f"convert_apkg() with dry_run=True should return True, got {result!r}"
-    )
-    assert not dest.exists(), (
-        f"convert_apkg() with dry_run=True must NOT create the dest file, "
-        f"but {dest} exists"
-    )
+        # Assertions must be inside the context so dest still refers to a
+        # path within the live temporary directory.
+        assert result is True, (
+            f"convert_apkg() with dry_run=True should return True, got {result!r}"
+        )
+        assert not dest.exists(), (
+            f"convert_apkg() with dry_run=True must NOT create the dest file, "
+            f"but {dest} exists"
+        )
 
 
 # --- 3. Missing audio archive file: warning logged, note still added ----------

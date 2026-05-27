@@ -184,10 +184,25 @@ def build_bidirectional_package(
             if archive_key is not None:
                 file_path = media_dir / archive_key
                 if file_path.exists():
-                    named_path = media_dir / filename
-                    if not named_path.exists():
-                        shutil.copy2(file_path, named_path)
-                    media_files.append(str(named_path))
+                    # Sanitize filename to prevent path traversal: keep only
+                    # the bare filename component and reject any path separators
+                    # or parent-directory references.
+                    safe_name = Path(filename).name
+                    if not safe_name or safe_name != filename or ".." in filename:
+                        logger.warning(
+                            f"Skipping unsafe media filename: {filename!r}"
+                        )
+                    else:
+                        named_path = media_dir / safe_name
+                        # Verify the resolved path stays inside media_dir
+                        if not named_path.resolve().is_relative_to(media_dir.resolve()):
+                            logger.warning(
+                                f"Skipping media file that would escape media_dir: {filename!r}"
+                            )
+                        else:
+                            if not named_path.exists():
+                                shutil.copy2(file_path, named_path)
+                            media_files.append(str(named_path))
                 else:
                     logger.warning(f"Media file not found in archive: {file_path}")
             else:

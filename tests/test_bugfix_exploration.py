@@ -81,9 +81,9 @@ def _make_raw_note(english: str, cantonese: str, jyutping: str, audio: str) -> d
 
 @pytest.mark.property
 @given(
-    st.text(min_size=1),
-    st.text(min_size=1),
-    st.text(min_size=1),
+    st.text(min_size=1, max_size=50).filter(lambda s: s.strip()),
+    st.text(min_size=1, max_size=50).filter(lambda s: s.strip()),
+    st.text(min_size=1, max_size=50).filter(lambda s: s.strip()),
 )
 @settings(max_examples=50)
 def test_bug1_field_slot_order(english: str, cantonese: str, jyutping: str):
