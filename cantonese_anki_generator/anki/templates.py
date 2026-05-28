@@ -113,7 +113,13 @@ class CantoneseCardTemplate:
 </div>
 """
 
-    # Back template (Cantonese with Jyutping and audio)
+    # Back template (Cantonese with Jyutping and audio).
+    #
+    # Adaptive layout:
+    #   - When Cantonese (Chinese characters) is present: show characters as the
+    #     primary back content, with Jyutping as a smaller subtitle below.
+    #   - When Cantonese is empty (italki-style lessons with Jyutping only):
+    #     promote Jyutping to the primary back content so the card is still useful.
     BACK_TEMPLATE = """
 <div class="card">
     <div class="front">
@@ -122,15 +128,24 @@ class CantoneseCardTemplate:
 
     <hr>
 
+    {{#Cantonese}}
     <div class="back">
         {{Cantonese}}
     </div>
-
     {{#Jyutping}}
     <div class="jyutping">
         {{Jyutping}}
     </div>
     {{/Jyutping}}
+    {{/Cantonese}}
+
+    {{^Cantonese}}
+    {{#Jyutping}}
+    <div class="back">
+        {{Jyutping}}
+    </div>
+    {{/Jyutping}}
+    {{/Cantonese}}
 
     <div class="audio-section">
         <div class="audio-label">🔊 Pronunciation:</div>
@@ -141,18 +156,31 @@ class CantoneseCardTemplate:
 
     # ── Card 2: Cantonese → English ───────────────────────────────────────────
 
-    # Front template (Cantonese with Jyutping and audio as the prompt)
+    # Front template (Cantonese with Jyutping and audio as the prompt).
+    #
+    # Adaptive layout:
+    #   - When Cantonese is present: show characters as the prompt.
+    #   - When Cantonese is empty: show Jyutping as the prompt instead.
     REVERSE_FRONT_TEMPLATE = """
 <div class="card">
+    {{#Cantonese}}
     <div class="back">
         {{Cantonese}}
     </div>
-
     {{#Jyutping}}
     <div class="jyutping">
         {{Jyutping}}
     </div>
     {{/Jyutping}}
+    {{/Cantonese}}
+
+    {{^Cantonese}}
+    {{#Jyutping}}
+    <div class="back">
+        {{Jyutping}}
+    </div>
+    {{/Jyutping}}
+    {{/Cantonese}}
 
     <div class="audio-section">
         <div class="audio-label">🔊 Pronunciation:</div>
@@ -161,18 +189,27 @@ class CantoneseCardTemplate:
 </div>
 """
 
-    # Back template (reveals the English meaning)
+    # Back template (reveals the English meaning).
     REVERSE_BACK_TEMPLATE = """
 <div class="card">
+    {{#Cantonese}}
     <div class="back">
         {{Cantonese}}
     </div>
-
     {{#Jyutping}}
     <div class="jyutping">
         {{Jyutping}}
     </div>
     {{/Jyutping}}
+    {{/Cantonese}}
+
+    {{^Cantonese}}
+    {{#Jyutping}}
+    <div class="back">
+        {{Jyutping}}
+    </div>
+    {{/Jyutping}}
+    {{/Cantonese}}
 
     <div class="audio-section">
         <div class="audio-label">🔊 Pronunciation:</div>
